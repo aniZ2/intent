@@ -1,0 +1,8 @@
+.claude/
+logs/
+data/sessions/
+bin/
+obj/
+*.dll
+*.exe
+*.zip

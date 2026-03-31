@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <AssemblyName>Intent.Engine</AssemblyName>
+    <RootNamespace>Intent.Engine</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="mscorlib">
+      <HintPath>C:\Windows\Microsoft.NET\Framework64\v4.0.30319\mscorlib.dll</HintPath>
+    </Reference>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="Ingestion\OrderFlowPriceLevel.cs" />
+    <Compile Include="Ingestion\IBarBuilder.cs" />
+    <Compile Include="Ingestion\BarBuilder.cs" />
+    <Compile Include="Models\TickData.cs" />
+    <Compile Include="Models\OrderFlowData.cs" />
+    <Compile Include="Models\BarData.cs" />
+    <Compile Include="Models\EngineSettings.cs" />
+    <Compile Include="Transport\TickJsonSerializer.cs" />
+    <Compile Include="State\RollingStatistics.cs" />
+    <Compile Include="State\SessionContext.cs" />
+    <Compile Include="State\EngineState.cs" />
+    <Compile Include="Runtime\StreamDecision.cs" />
+    <Compile Include="Runtime\TickProcessingResult.cs" />
+    <Compile Include="Runtime\IntentRuntime.cs" />
+    <Compile Include="Signals\SignalModels.cs" />
+    <Compile Include="Signals\SignalMath.cs" />
+    <Compile Include="Signals\IntentSignalEngine.cs" />
+  </ItemGroup>
+</Project>

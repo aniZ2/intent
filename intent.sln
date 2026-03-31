@@ -1,0 +1,67 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.5.2.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{827E0CD3-B72D-47B6-A68D-7590B98EB39B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Intent.Console", "src\Intent.Console\Intent.Console.csproj", "{B6E71AA1-7711-07C4-F81E-25545635C381}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Intent.Engine", "src\Intent.Engine\Intent.Engine.csproj", "{AD085946-1D73-C451-105B-38A5FF0AD6C7}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Intent.Engine.Tests", "src\Intent.Engine.Tests\Intent.Engine.Tests.csproj", "{7CFDFC23-0E9C-1053-41A6-C5BB66603ADE}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Intent.Replay", "src\Intent.Replay\Intent.Replay.csproj", "{7D80C557-87FE-E925-9174-69AC41C7DD00}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Intent.Sweep", "src\Intent.Sweep\Intent.Sweep.csproj", "{DB03C137-3996-2F73-64D5-127AD4A1667B}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "NinjaTrader8", "NinjaTrader8", "{A39CC135-3474-4212-5F37-19FD7E1BBCBD}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "IntentLayerV01", "src\NinjaTrader8\IntentLayerV01.csproj", "{AD01000B-D4FC-8BAA-04D1-E2993A66D301}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{B6E71AA1-7711-07C4-F81E-25545635C381}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B6E71AA1-7711-07C4-F81E-25545635C381}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B6E71AA1-7711-07C4-F81E-25545635C381}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B6E71AA1-7711-07C4-F81E-25545635C381}.Release|Any CPU.Build.0 = Release|Any CPU
+		{AD085946-1D73-C451-105B-38A5FF0AD6C7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{AD085946-1D73-C451-105B-38A5FF0AD6C7}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{AD085946-1D73-C451-105B-38A5FF0AD6C7}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{AD085946-1D73-C451-105B-38A5FF0AD6C7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7CFDFC23-0E9C-1053-41A6-C5BB66603ADE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7CFDFC23-0E9C-1053-41A6-C5BB66603ADE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7CFDFC23-0E9C-1053-41A6-C5BB66603ADE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7CFDFC23-0E9C-1053-41A6-C5BB66603ADE}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7D80C557-87FE-E925-9174-69AC41C7DD00}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7D80C557-87FE-E925-9174-69AC41C7DD00}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7D80C557-87FE-E925-9174-69AC41C7DD00}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7D80C557-87FE-E925-9174-69AC41C7DD00}.Release|Any CPU.Build.0 = Release|Any CPU
+		{DB03C137-3996-2F73-64D5-127AD4A1667B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{DB03C137-3996-2F73-64D5-127AD4A1667B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{DB03C137-3996-2F73-64D5-127AD4A1667B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{DB03C137-3996-2F73-64D5-127AD4A1667B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{AD01000B-D4FC-8BAA-04D1-E2993A66D301}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{AD01000B-D4FC-8BAA-04D1-E2993A66D301}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{AD01000B-D4FC-8BAA-04D1-E2993A66D301}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{AD01000B-D4FC-8BAA-04D1-E2993A66D301}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{B6E71AA1-7711-07C4-F81E-25545635C381} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{AD085946-1D73-C451-105B-38A5FF0AD6C7} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{7CFDFC23-0E9C-1053-41A6-C5BB66603ADE} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{7D80C557-87FE-E925-9174-69AC41C7DD00} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{DB03C137-3996-2F73-64D5-127AD4A1667B} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{A39CC135-3474-4212-5F37-19FD7E1BBCBD} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{AD01000B-D4FC-8BAA-04D1-E2993A66D301} = {A39CC135-3474-4212-5F37-19FD7E1BBCBD}
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {6DA95E93-A185-48AA-B456-A1FB147AA86C}
+	EndGlobalSection
+EndGlobal

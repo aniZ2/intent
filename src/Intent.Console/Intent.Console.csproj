@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>Intent.StreamRunner</AssemblyName>
+    <RootNamespace>Intent.StreamRunner</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="mscorlib">
+      <HintPath>C:\Windows\Microsoft.NET\Framework64\v4.0.30319\mscorlib.dll</HintPath>
+    </Reference>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Runtime.Serialization" />
+    <Reference Include="System.Web.Extensions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Intent.Engine\Intent.Engine.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="DecisionPacketSink.cs" />
+    <Compile Include="DashboardBroadcaster.cs" />
+    <Compile Include="Program.cs" />
+    <Compile Include="RawTickArchive.cs" />
+    <Compile Include="RunnerOptions.cs" />
+    <Compile Include="RunnerLogger.cs" />
+    <Compile Include="RuntimeFactory.cs" />
+    <Compile Include="TickJsonDeserializer.cs" />
+    <Compile Include="TcpTickServer.cs" />
+  </ItemGroup>
+</Project>
