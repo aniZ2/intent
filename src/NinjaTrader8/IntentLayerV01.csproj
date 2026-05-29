@@ -49,5 +49,6 @@
     <Compile Include="Indicators\IntentLayerV01.Models.cs" />
     <Compile Include="Indicators\IntentLayerV01.Rendering.cs" />
     <Compile Include="Indicators\IntentLayerV01.Streaming.cs" />
+    <Compile Include="Strategies\IntentAutoTraderV01.cs" />
   </ItemGroup>
 </Project>

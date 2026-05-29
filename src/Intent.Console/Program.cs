@@ -13,8 +13,7 @@ namespace Intent.StreamRunner
 			using (RawTickArchive tickArchive = new RawTickArchive(options.TickArchiveRootPath))
 			using (DashboardBroadcaster dashboard = new DashboardBroadcaster(options.DashboardPort, logger))
 			{
-				IntentRuntime runtime = RuntimeFactory.Create(options);
-				TcpTickServer server = new TcpTickServer(options, runtime, new TickJsonDeserializer(), logger, packetSink, tickArchive, dashboard);
+				TcpTickServer server = new TcpTickServer(options, () => RuntimeFactory.Create(options), new TickJsonDeserializer(), logger, packetSink, tickArchive, dashboard);
 
 				Console.CancelKeyPress += delegate(object sender, ConsoleCancelEventArgs eventArgs)
 				{

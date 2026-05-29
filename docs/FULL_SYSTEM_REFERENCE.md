@@ -652,9 +652,9 @@ Sweep B 85 | S 0
 - No backtesting framework (replay client streams forward only, no P&L tracking)
 - No multi-instrument correlation (each instance analyzes one instrument independently)
 - No machine learning or adaptive parameter tuning
-- No web UI or dashboard (output is chart-based or NDJSON files)
+- Local web dashboard exists via `Intent.Console/DashboardBroadcaster` with control/status endpoints and SSE packet streaming
 - No alerting system (no push notifications, email, or webhook on signal)
-- No position sizing, risk management, or trade execution logic
+- NinjaTrader strategies now provide manual and automated trade execution paths, dashboard-controlled commands, and basic risk/execution state reporting
 - No market regime detection (trending vs. ranging vs. choppy)
 - No time-of-day or session-phase awareness in scoring (e.g., open vs. close behavior)
 - No integration tests for the TCP server (behavioral tests cover the engine, not the network layer)

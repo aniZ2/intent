@@ -22,6 +22,8 @@ Files:
 - `src/Intent.Sweep`: offline parameter sweep worker for replay-driven settings experiments
 - `docs/STREAMING_CONTRACT.md`: line-delimited JSON contract for inbound ticks and outbound decisions
 - `IntentLayerV01.cs`: public indicator, properties, plots, chart drawings, debug panel
+- `IntentAutoTraderV01.cs`: full NinjaTrader trading strategy with dashboard bridge, direct manual dashboard order commands, and 5m/15m bias filtering
+- `IntentBridgeTestStrategy.cs`: minimal NinjaTrader bridge smoke-test strategy for dashboard-driven demo orders without engine gating
 - `IntentLayerV01.Adapter.cs`: explicit NinjaTrader adapter boundary
 - `IntentLayerV01.Engine.cs`: NinjaTrader adapter that converts platform state into engine inputs
 - `IntentLayerV01.Models.cs`: NinjaTrader-only visual theme models
@@ -39,6 +41,11 @@ Outputs:
 - `BearScore` plot
 - on-chart arrow signals
 - fixed debug panel
+- strategy-driven order entry when `IntentAutoTraderV01.ExecutionMode=Auto`
+- manual signal logging when `IntentAutoTraderV01.ExecutionMode=Manual`
+- dashboard-driven manual order entry via `Buy Market` / `Sell Market` / `Reverse` / `Flatten`
+- local dashboard control/status bridge over `POST /api/control`, `GET /api/command`, and `POST /api/strategy-status` with temp-file fallback
+- bridge-only smoke testing via `IntentBridgeTestStrategy`
 - structured decision packets from the pure engine (`SignalResult.ToDecisionPacket()` / JSON-ready `ToJson()`)
 - line-delimited TCP tick ingestion with hybrid emission (`barClose` + thresholded `signal` packets)
 - NinjaTrader can now emit live ticks over TCP when `EnableTickStreaming=true`
@@ -54,5 +61,6 @@ Offline tuning:
 Notes:
 - this version is compile-safe and now uses NinjaTrader Order Flow+ volumetric bid/ask data for imbalance, absorption, and order-flow confirmation
 - use it on volumetric bars; the debug panel will show `N/A` when volumetric data is unavailable
+- the dashboard UI is an HTTP control surface; the current long-term target is a dedicated NinjaTrader AddOn control plane, but the repo currently ships a strategy-hosted bridge plus `IntentBridgeTestStrategy` for smoke testing
 - standalone compile output was validated locally with `csc.exe` for the engine, console app, and NinjaTrader adapter build
 - pure-engine behavior scenarios now include multi-bar `EngineState` sequences, negative/no-trade checks, order-flow precedence checks, and packet/explainability validation via `tools/Validate-Behavior.ps1`

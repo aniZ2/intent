@@ -23,9 +23,14 @@ namespace Intent.Engine.State
 				sum -= values.Dequeue();
 		}
 
+		public bool IsReady
+		{
+			get { return values.Count >= capacity; }
+		}
+
 		public double Average
 		{
-			get { return values.Count == 0 ? 0 : sum / values.Count; }
+			get { return values.Count < capacity ? 0 : sum / values.Count; }
 		}
 	}
 }

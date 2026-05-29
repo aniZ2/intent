@@ -1,6 +1,6 @@
 ﻿# NinjaTrader API Index
 
-Generated: 2026-03-30 23:23:45 -04:00
+Generated: 2026-03-31 01:41:16 -04:00
 
 This snapshot is generated from local installed assemblies.
 

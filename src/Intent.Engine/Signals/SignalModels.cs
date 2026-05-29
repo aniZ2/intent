@@ -15,7 +15,23 @@ namespace Intent.Engine.Signals
 		OrderFlowImbalance,
 		Absorption,
 		FailedBreakout,
-		LiquiditySweep
+		LiquiditySweep,
+		BreakoutContinuation
+	}
+
+	public enum IntentSignalClassification
+	{
+		Neutral = 0,
+		Continuation = 1,
+		Pullback = 2,
+		Reversal = 3
+	}
+
+	public enum TradeAction
+	{
+		StandAside = 0,
+		Buy = 1,
+		Sell = 2
 	}
 
 	public sealed class SignalFactor
@@ -146,6 +162,11 @@ namespace Intent.Engine.Signals
 		public double BearScore { get; set; }
 		public string Bias { get; set; }
 		public string Direction { get; set; }
+		public string TrendDirection { get; set; }
+		public string SignalClassification { get; set; }
+		public string TradeAction { get; set; }
+		public string EntryStyle { get; set; }
+		public string StopLevel { get; set; }
 		public string Confidence { get; set; }
 		public string DominantReason { get; set; }
 		public string DominantSignalType { get; set; }
@@ -173,6 +194,11 @@ namespace Intent.Engine.Signals
 			AppendProperty(builder, "bearScore", BearScore);
 			AppendProperty(builder, "bias", Bias, true);
 			AppendProperty(builder, "direction", Direction, true);
+			AppendProperty(builder, "trendDirection", TrendDirection, true);
+			AppendProperty(builder, "signalClassification", SignalClassification, true);
+			AppendProperty(builder, "tradeAction", TradeAction, true);
+			AppendProperty(builder, "entryStyle", EntryStyle, true);
+			AppendProperty(builder, "stopLevel", StopLevel, true);
 			AppendProperty(builder, "confidence", Confidence, true);
 			AppendProperty(builder, "dominantReason", DominantReason, true);
 			AppendProperty(builder, "dominantSignalType", DominantSignalType, true);
@@ -297,7 +323,8 @@ namespace Intent.Engine.Signals
 			Absorption = new SignalScore(IntentSignalType.Absorption);
 			FailedBreakout = new SignalScore(IntentSignalType.FailedBreakout);
 			LiquiditySweep = new SignalScore(IntentSignalType.LiquiditySweep);
-			Signals = new[] { Imbalance, Absorption, FailedBreakout, LiquiditySweep };
+			BreakoutContinuation = new SignalScore(IntentSignalType.BreakoutContinuation);
+			Signals = new[] { Imbalance, Absorption, FailedBreakout, LiquiditySweep, BreakoutContinuation };
 			BullishScoreFactors = new SignalFactor[0];
 			BearishScoreFactors = new SignalFactor[0];
 		}
@@ -307,11 +334,17 @@ namespace Intent.Engine.Signals
 		public SignalScore Absorption { get; private set; }
 		public SignalScore FailedBreakout { get; private set; }
 		public SignalScore LiquiditySweep { get; private set; }
+		public SignalScore BreakoutContinuation { get; private set; }
 		public SignalScore[] Signals { get; private set; }
 		public double BullScore { get; set; }
 		public double BearScore { get; set; }
 		public double IntentScore { get; set; }
 		public IntentDirection Direction { get; set; }
+		public IntentDirection TrendDirection { get; set; }
+		public IntentSignalClassification SignalClassification { get; set; }
+		public TradeAction RecommendedTradeAction { get; set; }
+		public string EntryStyle { get; set; }
+		public string StopLevel { get; set; }
 		public string DominantReason { get; set; }
 		public SignalFactor[] BullishScoreFactors { get; set; }
 		public SignalFactor[] BearishScoreFactors { get; set; }
@@ -325,15 +358,47 @@ namespace Intent.Engine.Signals
 
 			for (int i = 1; i < Signals.Length; i++)
 			{
-				double candidate = Signals[i].GetScore(direction);
-				if (candidate <= best)
+				SignalScore candidateSignal = Signals[i];
+				double candidate = candidateSignal.GetScore(direction);
+				if (candidate < best)
+				{
+					if (winner.SignalType == IntentSignalType.OrderFlowImbalance
+						&& GetSpecificityRank(candidateSignal.SignalType) > GetSpecificityRank(winner.SignalType)
+						&& candidate >= 60
+						&& candidate >= (best - 20))
+					{
+						winner = candidateSignal;
+						best = candidate;
+					}
 					continue;
+				}
+
+				if (candidate == best)
+				{
+					if (GetSpecificityRank(candidateSignal.SignalType) <= GetSpecificityRank(winner.SignalType))
+						continue;
+				}
 
 				best = candidate;
-				winner = Signals[i];
+				winner = candidateSignal;
 			}
 
 			return winner;
+		}
+
+		private static int GetSpecificityRank(IntentSignalType signalType)
+		{
+			if (signalType == IntentSignalType.OrderFlowImbalance)
+				return 1;
+			if (signalType == IntentSignalType.Absorption)
+				return 2;
+			if (signalType == IntentSignalType.BreakoutContinuation)
+				return 3;
+			if (signalType == IntentSignalType.LiquiditySweep)
+				return 4;
+			if (signalType == IntentSignalType.FailedBreakout)
+				return 5;
+			return 0;
 		}
 
 		public SignalFactor[] GetScoreFactors(IntentDirection direction)
@@ -360,6 +425,11 @@ namespace Intent.Engine.Signals
 				BearScore = BearScore,
 				Bias = packetDirection.ToString(),
 				Direction = Direction.ToString(),
+				TrendDirection = TrendDirection.ToString(),
+				SignalClassification = SignalClassification.ToString(),
+				TradeAction = RecommendedTradeAction.ToString(),
+				EntryStyle = EntryStyle ?? string.Empty,
+				StopLevel = StopLevel ?? string.Empty,
 				Confidence = ClassifyConfidence(IntentScore),
 				DominantReason = DominantReason,
 				DominantSignalType = dominantSignal == null ? string.Empty : dominantSignal.SignalType.ToString(),
@@ -376,7 +446,8 @@ namespace Intent.Engine.Signals
 					Imbalance.ToPacket(),
 					Absorption.ToPacket(),
 					FailedBreakout.ToPacket(),
-					LiquiditySweep.ToPacket()
+					LiquiditySweep.ToPacket(),
+					BreakoutContinuation.ToPacket()
 				}
 			};
 		}

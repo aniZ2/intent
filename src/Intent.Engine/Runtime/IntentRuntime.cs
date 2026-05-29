@@ -43,6 +43,8 @@ namespace Intent.Engine.Runtime
 			if (tick == null)
 				return outcome;
 
+			string completedBarInstrument = lastInstrument;
+
 			if (!string.IsNullOrWhiteSpace(tick.Instrument))
 				lastInstrument = tick.Instrument;
 			else if (!string.IsNullOrWhiteSpace(defaultInstrument))
@@ -53,7 +55,7 @@ namespace Intent.Engine.Runtime
 				return outcome;
 
 			outcome.CompletedBar = completedBar;
-			AnalyzeCompletedBar(completedBar, lastInstrument, outcome);
+			AnalyzeCompletedBar(completedBar, completedBarInstrument, outcome);
 			return outcome;
 		}
 

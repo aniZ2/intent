@@ -21,11 +21,15 @@ namespace Intent.Engine.Tests
 				TestImbalanceDetection();
 				TestFailedBreakoutTrap();
 				TestLiquiditySweep();
+				TestBreakoutContinuation();
 				TestNoTradeScenario();
 				TestLowQualityBreakoutDoesNotTrigger();
 				TestScoringConsistency();
 				TestExplainability();
 				TestStructuredDecisionPacket();
+				TestContinuationClassification();
+				TestPullbackClassification();
+				TestReversalClassification();
 				TestOrderFlowOverridesWeakBarStructure();
 				TestEngineStateSequenceBuildsTrapContext();
 				TestEngineStateSequenceBuildsSweepContext();
@@ -301,10 +305,121 @@ namespace Intent.Engine.Tests
 			AssertReason("Decision packet should carry a confidence label.", packet.Confidence);
 			AssertTrue("Decision packet should expose product-ready target zones.", packet.TargetZones.Length >= 2);
 			AssertTrue("Decision packet should expose dominant factors.", packet.Factors.Length > 0);
-			AssertTrue("Decision packet should include signals.", packet.Signals.Length == 4);
+			AssertTrue("Decision packet should include signals.", packet.Signals.Length == 5);
 			AssertTrue("Decision packet JSON should be API-ready.", json.Contains("\"intentScore\"") && json.Contains("\"signals\""));
 			AssertTrue("Decision packet JSON should include streaming metadata.", json.Contains("\"confidence\"") && json.Contains("\"targetZones\""));
+			AssertTrue("Decision packet JSON should include classification metadata.", json.Contains("\"trendDirection\"") && json.Contains("\"signalClassification\""));
+			AssertTrue("Decision packet JSON should include trading-rule metadata.", json.Contains("\"tradeAction\"") && json.Contains("\"entryStyle\"") && json.Contains("\"stopLevel\""));
 			AssertTrue("Decision packet JSON should include reasons.", json.Contains("dominantReason"));
+		}
+
+		private static void TestContinuationClassification()
+		{
+			BarData bar = CreateHighConfidenceImbalanceBar();
+			bar.PriorSignalDirection = IntentDirection.Bullish;
+			bar.PriorIntentScore = 78;
+
+			SignalResult result = Analyze(bar);
+
+			AssertEqual("Aligned bullish context should classify as continuation.", IntentSignalClassification.Continuation, result.SignalClassification);
+			AssertEqual("Prior bullish context should set bullish trend.", IntentDirection.Bullish, result.TrendDirection);
+		}
+
+		private static void TestBreakoutContinuation()
+		{
+			BarData bar = CreateBaseBar();
+			bar.Open = 23266.00;
+			bar.High = 23266.25;
+			bar.Low = 23261.50;
+			bar.Close = 23261.75;
+			bar.PriorSwingHigh = 23266.00;
+			bar.PriorSwingLow = 23263.75;
+			bar.Volume = 2400;
+			bar.AverageVolume = 1300;
+			bar.AverageRange = 2.25;
+			bar.PriorSignalDirection = IntentDirection.Bearish;
+			bar.PriorIntentScore = 72;
+			bar.OrderFlow = CreateOrderFlow(
+				450,
+				1950,
+				0,
+				5,
+				1.1,
+				5.5,
+				CreateLevels(
+					CreateLevel(23266.00, 35, 70),
+					CreateLevel(23265.50, 25, 150),
+					CreateLevel(23265.00, 20, 210),
+					CreateLevel(23264.50, 20, 260),
+					CreateLevel(23264.00, 15, 330),
+					CreateLevel(23263.75, 15, 360),
+					CreateLevel(23263.25, 10, 310),
+					CreateLevel(23262.75, 10, 280),
+					CreateLevel(23262.25, 10, 240),
+					CreateLevel(23261.75, 10, 180),
+					CreateLevel(23261.50, 10, 140)));
+
+			SignalResult result = Analyze(bar);
+
+			AssertTrue("Breakout continuation should register a strong bearish continuation score.", result.BreakoutContinuation.Bearish >= 65);
+			AssertEqual("Breakout continuation should be dominant signal type.", IntentSignalType.BreakoutContinuation, result.GetDominantSignal(IntentDirection.Bearish).SignalType);
+			AssertEqual("Aligned downside break should classify as continuation.", IntentSignalClassification.Continuation, result.SignalClassification);
+			AssertEqual("Aligned downside break should preserve bearish trend.", IntentDirection.Bearish, result.TrendDirection);
+			AssertEqual("Aligned downside break above threshold should produce a sell action.", TradeAction.Sell, result.RecommendedTradeAction);
+			AssertEqual("Continuation trades should use follow entry style.", "Follow", result.EntryStyle);
+		}
+
+		private static void TestPullbackClassification()
+		{
+			double originalNeutralityBuffer = Settings.NeutralityBuffer;
+			int originalSignalThreshold = Settings.SignalThreshold;
+			try
+			{
+				Settings.NeutralityBuffer = 0;
+				Settings.SignalThreshold = 25;
+				BarData bar = CreateHighConfidenceImbalanceBar();
+				bar.PriorSignalDirection = IntentDirection.Bearish;
+				bar.PriorIntentScore = 82;
+				bar.PriorSwingHigh = 102.00;
+				bar.PriorSwingLow = 99.00;
+
+				SignalResult result = Analyze(bar);
+
+				AssertEqual("Opposing bullish signal inside bearish context should classify as pullback.", IntentSignalClassification.Pullback, result.SignalClassification);
+				AssertEqual("Prior bearish context should set bearish trend.", IntentDirection.Bearish, result.TrendDirection);
+			}
+			finally
+			{
+				Settings.NeutralityBuffer = originalNeutralityBuffer;
+				Settings.SignalThreshold = originalSignalThreshold;
+			}
+		}
+
+		private static void TestReversalClassification()
+		{
+			int originalSignalThreshold = Settings.SignalThreshold;
+			double originalNeutralityBuffer = Settings.NeutralityBuffer;
+			try
+			{
+				Settings.SignalThreshold = 55;
+				Settings.NeutralityBuffer = 0;
+				BarData bar = CreateHighConfidenceSweepBar();
+				bar.PriorSignalDirection = IntentDirection.Bearish;
+				bar.PriorIntentScore = 85;
+				bar.PriorSwingHigh = 101.50;
+				bar.PriorSwingLow = 100.00;
+				bar.Close = 100.90;
+
+				SignalResult result = Analyze(bar);
+
+				AssertEqual("Trap-style bullish signal against bearish context should classify as reversal.", IntentSignalClassification.Reversal, result.SignalClassification);
+				AssertEqual("Prior bearish context should remain the trend reference.", IntentDirection.Bearish, result.TrendDirection);
+			}
+			finally
+			{
+				Settings.SignalThreshold = originalSignalThreshold;
+				Settings.NeutralityBuffer = originalNeutralityBuffer;
+			}
 		}
 
 		private static void TestOrderFlowOverridesWeakBarStructure()
@@ -718,6 +833,18 @@ namespace Intent.Engine.Tests
 		}
 
 		private static void AssertEqual(string message, IntentSignalType expected, IntentSignalType actual)
+		{
+			if (expected != actual)
+				throw new InvalidOperationException(string.Format("{0} Expected {1}, got {2}.", message, expected, actual));
+		}
+
+		private static void AssertEqual(string message, IntentSignalClassification expected, IntentSignalClassification actual)
+		{
+			if (expected != actual)
+				throw new InvalidOperationException(string.Format("{0} Expected {1}, got {2}.", message, expected, actual));
+		}
+
+		private static void AssertEqual(string message, TradeAction expected, TradeAction actual)
 		{
 			if (expected != actual)
 				throw new InvalidOperationException(string.Format("{0} Expected {1}, got {2}.", message, expected, actual));

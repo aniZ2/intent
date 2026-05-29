@@ -11,14 +11,16 @@ namespace Intent.Engine.Ingestion
 		private readonly TimeSpan barSize;
 		private readonly EngineState engineState;
 		private readonly double tickSize;
+		private readonly EngineSettings settings;
 		private DateTime currentBarStartUtc;
 		private MutableBar currentBar;
 
-		public BarBuilder(TimeSpan barSize, EngineState engineState, double tickSize)
+		public BarBuilder(TimeSpan barSize, EngineState engineState, double tickSize, EngineSettings settings = null)
 		{
 			this.barSize = barSize;
 			this.engineState = engineState;
 			this.tickSize = tickSize <= 0 ? 0.25 : tickSize;
+			this.settings = settings ?? new EngineSettings();
 		}
 
 		public bool TryAddTick(TickData tick, out BarData completedBar)
@@ -58,7 +60,7 @@ namespace Intent.Engine.Ingestion
 			if (currentBar == null)
 				return null;
 
-			BarData bar = currentBar.ToBarData(currentBarStartUtc, tickSize, engineState);
+			BarData bar = currentBar.ToBarData(currentBarStartUtc, tickSize, engineState, settings);
 			currentBar = null;
 			if (bar != null && engineState != null)
 				engineState.ApplyCompletedBar(bar);
@@ -113,9 +115,9 @@ namespace Intent.Engine.Ingestion
 					level.BidVolume += tick.Volume;
 			}
 
-			public BarData ToBarData(DateTime timestampUtc, double tickSize, EngineState state)
+			public BarData ToBarData(DateTime timestampUtc, double tickSize, EngineState state, EngineSettings settings)
 			{
-				OrderFlowData orderFlow = BuildOrderFlowData(levels.Values);
+				OrderFlowData orderFlow = BuildOrderFlowData(levels.Values, settings);
 				double averageVolume = state == null ? 0 : state.VolumeStats.Average;
 				double averageRange = state == null ? 0 : state.RangeStats.Average;
 				double priorSwingHigh = state == null || state.PriorSwingHigh == 0 ? High : state.PriorSwingHigh;
@@ -139,11 +141,13 @@ namespace Intent.Engine.Ingestion
 				};
 			}
 
-			private static OrderFlowData BuildOrderFlowData(IEnumerable<OrderFlowPriceLevel> levels)
+			private static OrderFlowData BuildOrderFlowData(IEnumerable<OrderFlowPriceLevel> levels, EngineSettings settings)
 			{
 				OrderFlowData data = new OrderFlowData();
 				double maxAskRatio = 0;
 				double maxBidRatio = 0;
+				long minImbalanceVolume = settings != null ? settings.MinImbalanceVolumePerLevel : 0;
+				double ratioThreshold = settings != null ? settings.ImbalanceRatioThreshold : 2.5;
 				OrderFlowPriceLevel highestPriceLevel = null;
 				OrderFlowPriceLevel lowestPriceLevel = null;
 
@@ -159,16 +163,23 @@ namespace Intent.Engine.Ingestion
 					if (lowestPriceLevel == null || level.Price < lowestPriceLevel.Price)
 						lowestPriceLevel = level;
 
-					double askRatio = SignalMath.SafeRatio(level.AskVolume, Math.Max(1, level.BidVolume));
-					double bidRatio = SignalMath.SafeRatio(level.BidVolume, Math.Max(1, level.AskVolume));
-					if (askRatio > maxAskRatio)
-						maxAskRatio = askRatio;
-					if (bidRatio > maxBidRatio)
-						maxBidRatio = bidRatio;
-					if (askRatio >= 2.5 && level.AskVolume >= 1)
-						data.AskImbalanceLevels++;
-					if (bidRatio >= 2.5 && level.BidVolume >= 1)
-						data.BidImbalanceLevels++;
+					if (level.AskVolume >= minImbalanceVolume)
+					{
+						double askRatio = SignalMath.SafeRatio(level.AskVolume, Math.Max(1, level.BidVolume));
+						if (askRatio > maxAskRatio)
+							maxAskRatio = askRatio;
+						if (askRatio >= ratioThreshold)
+							data.AskImbalanceLevels++;
+					}
+
+					if (level.BidVolume >= minImbalanceVolume)
+					{
+						double bidRatio = SignalMath.SafeRatio(level.BidVolume, Math.Max(1, level.AskVolume));
+						if (bidRatio > maxBidRatio)
+							maxBidRatio = bidRatio;
+						if (bidRatio >= ratioThreshold)
+							data.BidImbalanceLevels++;
+					}
 				}
 
 				data.AskImbalanceRatio = maxAskRatio;

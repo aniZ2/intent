@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
@@ -11,7 +12,8 @@ namespace Intent.StreamRunner
 	internal sealed class TcpTickServer
 	{
 		private readonly RunnerOptions options;
-		private readonly IntentRuntime runtime;
+		private readonly Func<IntentRuntime> runtimeFactory;
+		private readonly Dictionary<string, IntentRuntime> runtimes;
 		private readonly TickJsonDeserializer deserializer;
 		private readonly RunnerLogger logger;
 		private readonly DecisionPacketSink packetSink;
@@ -24,10 +26,11 @@ namespace Intent.StreamRunner
 		private long malformedTickCount;
 		private long totalPacketsEmitted;
 
-		public TcpTickServer(RunnerOptions options, IntentRuntime runtime, TickJsonDeserializer deserializer, RunnerLogger logger, DecisionPacketSink packetSink, RawTickArchive tickArchive, DashboardBroadcaster dashboard)
+		public TcpTickServer(RunnerOptions options, Func<IntentRuntime> runtimeFactory, TickJsonDeserializer deserializer, RunnerLogger logger, DecisionPacketSink packetSink, RawTickArchive tickArchive, DashboardBroadcaster dashboard)
 		{
 			this.options = options;
-			this.runtime = runtime;
+			this.runtimeFactory = runtimeFactory;
+			this.runtimes = new Dictionary<string, IntentRuntime>(StringComparer.Ordinal);
 			this.deserializer = deserializer;
 			this.logger = logger;
 			this.packetSink = packetSink;
@@ -68,8 +71,8 @@ namespace Intent.StreamRunner
 				}
 			}
 
-			TickProcessingResult flushResult = runtime.FlushPending();
-			WriteEmissions(flushResult);
+			foreach (IntentRuntime runtime in runtimes.Values)
+				WriteEmissions(runtime.FlushPending());
 			TimeSpan elapsed = DateTime.UtcNow - startedAtUtc;
 			double elapsedSeconds = Math.Max(1.0, elapsed.TotalSeconds);
 			logger.Info(string.Format("[summary] ticks={0} malformed={1} packets={2} ticksPerSec={3:0.##} packetsPerSec={4:0.##}", totalTicksReceived, malformedTickCount, totalPacketsEmitted, totalTicksReceived / elapsedSeconds, totalPacketsEmitted / elapsedSeconds));
@@ -134,7 +137,7 @@ namespace Intent.StreamRunner
 							tickArchive.WriteTick(tick.Instrument, tick.TimestampUtc, line);
 
 						totalTicksReceived++;
-						TickProcessingResult result = runtime.OnTick(tick);
+						TickProcessingResult result = GetRuntime(tick.Instrument).OnTick(tick);
 						WriteEmissions(result);
 					}
 				}
@@ -153,6 +156,20 @@ namespace Intent.StreamRunner
 			{
 				logger.Info("[client] disconnected");
 			}
+		}
+
+		private IntentRuntime GetRuntime(string instrument)
+		{
+			string key = string.IsNullOrWhiteSpace(instrument)
+				? (string.IsNullOrWhiteSpace(options.DefaultInstrument) ? string.Empty : options.DefaultInstrument)
+				: instrument;
+			IntentRuntime runtime;
+			if (!runtimes.TryGetValue(key, out runtime))
+			{
+				runtime = runtimeFactory();
+				runtimes[key] = runtime;
+			}
+			return runtime;
 		}
 
 		private void WriteEmissions(TickProcessingResult result)

@@ -16,6 +16,7 @@ namespace Intent.Engine.Signals
 			EvaluateAbsorption(bar, settings, result.Absorption);
 			EvaluateFailedBreakout(bar, settings, result.FailedBreakout);
 			EvaluateLiquiditySweep(bar, settings, result.LiquiditySweep);
+			EvaluateBreakoutContinuation(bar, settings, result.BreakoutContinuation);
 			FinalizeScores(bar, settings, result);
 
 			return result;
@@ -29,7 +30,7 @@ namespace Intent.Engine.Signals
 				{
 					CreateFactor("Ask imbalance levels", bar.OrderFlow.AskImbalanceLevels, NormalizeAbove(bar.OrderFlow.AskImbalanceLevels, 1.0, settings.ImbalanceLevelNormalizationSpan), 35, "Stacked ask-side imbalance."),
 					CreateFactor("Ask imbalance ratio", bar.OrderFlow.AskImbalanceRatio, NormalizeAbove(bar.OrderFlow.AskImbalanceRatio, settings.ImbalanceRatioThreshold, settings.ImbalanceRatioNormalizationSpan), 25, "Strong ask-over-bid ratio."),
-					CreateFactor("Delta per volume", bar.OrderFlow.DeltaPerVolume, NormalizeAbove(bar.OrderFlow.DeltaPerVolume, settings.DeltaPerVolumeBaseline, settings.DeltaPerVolumeNormalizationSpan), 20, "Positive delta supported by volume."),
+					CreateFactor("Delta per volume", bar.OrderFlow.DeltaPerVolume, bar.OrderFlow.BarDelta > 0 ? NormalizeAbove(bar.OrderFlow.DeltaPerVolume, settings.DeltaPerVolumeBaseline, settings.DeltaPerVolumeNormalizationSpan) : 0, 20, "Positive delta supported by volume."),
 					CreateFactor("Close location", bar.CloseLocation, NormalizeAbove(bar.CloseLocation, 0.50, settings.CloseLocationNormalizationSpan), 20, "Close holding near the bar high.")
 				};
 
@@ -37,7 +38,7 @@ namespace Intent.Engine.Signals
 				{
 					CreateFactor("Bid imbalance levels", bar.OrderFlow.BidImbalanceLevels, NormalizeAbove(bar.OrderFlow.BidImbalanceLevels, 1.0, settings.ImbalanceLevelNormalizationSpan), 35, "Stacked bid-side imbalance."),
 					CreateFactor("Bid imbalance ratio", bar.OrderFlow.BidImbalanceRatio, NormalizeAbove(bar.OrderFlow.BidImbalanceRatio, settings.ImbalanceRatioThreshold, settings.ImbalanceRatioNormalizationSpan), 25, "Strong bid-over-ask ratio."),
-					CreateFactor("Delta per volume", bar.OrderFlow.DeltaPerVolume, NormalizeAbove(bar.OrderFlow.DeltaPerVolume, settings.DeltaPerVolumeBaseline, settings.DeltaPerVolumeNormalizationSpan), 20, "Negative delta supported by volume."),
+					CreateFactor("Delta per volume", bar.OrderFlow.DeltaPerVolume, bar.OrderFlow.BarDelta < 0 ? NormalizeAbove(bar.OrderFlow.DeltaPerVolume, settings.DeltaPerVolumeBaseline, settings.DeltaPerVolumeNormalizationSpan) : 0, 20, "Negative delta supported by volume."),
 					CreateFactor("Close location", bar.CloseLocation, NormalizeBelow(bar.CloseLocation, 0.50, settings.CloseLocationNormalizationSpan), 20, "Close holding near the bar low.")
 				};
 
@@ -101,7 +102,7 @@ namespace Intent.Engine.Signals
 				SignalFactor[] bullishFactors = new[]
 				{
 					CreateFactor("Opposing delta", bar.OrderFlow.BarDelta, bar.OrderFlow.BarDelta < 0 ? NormalizeAbove(Math.Abs(bar.OrderFlow.DeltaPerVolume), settings.AbsorptionDeltaThresholdRatio, settings.DeltaPerVolumeNormalizationSpan) : 0, 30, "Selling pressure was absorbed."),
-					CreateFactor("Delta per volume", bar.OrderFlow.DeltaPerVolume, NormalizeAbove(Math.Abs(bar.OrderFlow.DeltaPerVolume), settings.AbsorptionDeltaThresholdRatio, settings.DeltaPerVolumeNormalizationSpan), 35, "Delta was large relative to volume."),
+					CreateFactor("Delta per volume", bar.OrderFlow.DeltaPerVolume, bar.OrderFlow.BarDelta < 0 ? NormalizeAbove(bar.OrderFlow.DeltaPerVolume, settings.AbsorptionDeltaThresholdRatio, settings.DeltaPerVolumeNormalizationSpan) : 0, 35, "Delta was large relative to volume."),
 					CreateFactor("Price efficiency", bar.PriceEfficiency, NormalizeBelow(bar.PriceEfficiency, settings.AbsorptionPriceEfficiencyThreshold, settings.AbsorptionPriceEfficiencyThreshold), 20, "Price barely moved despite pressure."),
 					CreateFactor("Close location", bar.CloseLocation, NormalizeAbove(bar.CloseLocation, 0.55, settings.FallbackCloseLocationNormalizationSpan), 15, "Close held away from the sell pressure.")
 				};
@@ -109,7 +110,7 @@ namespace Intent.Engine.Signals
 				SignalFactor[] bearishFactors = new[]
 				{
 					CreateFactor("Opposing delta", bar.OrderFlow.BarDelta, bar.OrderFlow.BarDelta > 0 ? NormalizeAbove(Math.Abs(bar.OrderFlow.DeltaPerVolume), settings.AbsorptionDeltaThresholdRatio, settings.DeltaPerVolumeNormalizationSpan) : 0, 30, "Buying pressure was absorbed."),
-					CreateFactor("Delta per volume", bar.OrderFlow.DeltaPerVolume, NormalizeAbove(Math.Abs(bar.OrderFlow.DeltaPerVolume), settings.AbsorptionDeltaThresholdRatio, settings.DeltaPerVolumeNormalizationSpan), 35, "Delta was large relative to volume."),
+					CreateFactor("Delta per volume", bar.OrderFlow.DeltaPerVolume, bar.OrderFlow.BarDelta > 0 ? NormalizeAbove(bar.OrderFlow.DeltaPerVolume, settings.AbsorptionDeltaThresholdRatio, settings.DeltaPerVolumeNormalizationSpan) : 0, 35, "Delta was large relative to volume."),
 					CreateFactor("Price efficiency", bar.PriceEfficiency, NormalizeBelow(bar.PriceEfficiency, settings.AbsorptionPriceEfficiencyThreshold, settings.AbsorptionPriceEfficiencyThreshold), 20, "Price barely moved despite pressure."),
 					CreateFactor("Close location", bar.CloseLocation, NormalizeBelow(bar.CloseLocation, 0.45, settings.FallbackCloseLocationNormalizationSpan), 15, "Close held away from the buy pressure.")
 				};
@@ -172,7 +173,7 @@ namespace Intent.Engine.Signals
 			{
 				CreateFactor("Break above ticks", bar.BreakAboveTicks, NormalizeAbove(bar.BreakAboveTicks, settings.BreakoutExcursionTicks, settings.BreakoutNormalizationSpan), 35, "Price extended beyond the prior high."),
 				CreateFactor("Reclaim below high", bar.ReclaimBelowHighTicks, NormalizeAbove(bar.ReclaimBelowHighTicks, settings.ReclaimTicks, settings.BreakoutNormalizationSpan), 25, "Breakout failed to hold above the prior high."),
-				CreateFactor("Close location", bar.CloseLocation, NormalizeBelow(bar.CloseLocation, 0.55, 0.55), 15, "Close rotated back toward the lows."),
+				CreateFactor("Close location", bar.CloseLocation, NormalizeBelow(bar.CloseLocation, settings.ReversalCloseLocationThreshold, settings.FallbackCloseLocationNormalizationSpan), 15, "Close rotated back toward the lows."),
 				CreateDirectionalFactor("Bar delta confirmation", bar.OrderFlow != null ? bar.OrderFlow.BarDelta : 0, bar.OrderFlow != null && bar.OrderFlow.IsAvailable && bar.OrderFlow.BarDelta < 0, 10, "Order flow confirmed the bearish trap."),
 				CreateFactor("Bid imbalance levels", bar.OrderFlow != null ? bar.OrderFlow.BidImbalanceLevels : 0, bar.OrderFlow != null && bar.OrderFlow.IsAvailable ? NormalizeAbove(bar.OrderFlow.BidImbalanceLevels, 1.0, settings.ImbalanceLevelNormalizationSpan) : 0, 10, "Bid imbalance expanded on the reversal."),
 				CreateFactor("Breakout zone confirmation", bearishZoneConfirmation, bearishZoneConfirmation, 15, "Negative delta accumulated above the failed breakout level.")
@@ -182,13 +183,28 @@ namespace Intent.Engine.Signals
 			{
 				CreateFactor("Break below ticks", bar.BreakBelowTicks, NormalizeAbove(bar.BreakBelowTicks, settings.BreakoutExcursionTicks, settings.BreakoutNormalizationSpan), 35, "Price extended beyond the prior low."),
 				CreateFactor("Reclaim above low", bar.ReclaimAboveLowTicks, NormalizeAbove(bar.ReclaimAboveLowTicks, settings.ReclaimTicks, settings.BreakoutNormalizationSpan), 25, "Breakout failed to hold below the prior low."),
-				CreateFactor("Close location", bar.CloseLocation, NormalizeAbove(bar.CloseLocation, 0.45, 0.55), 15, "Close rotated back toward the highs."),
+				CreateFactor("Close location", bar.CloseLocation, NormalizeAbove(bar.CloseLocation, 1.0 - settings.ReversalCloseLocationThreshold, settings.FallbackCloseLocationNormalizationSpan), 15, "Close rotated back toward the highs."),
 				CreateDirectionalFactor("Bar delta confirmation", bar.OrderFlow != null ? bar.OrderFlow.BarDelta : 0, bar.OrderFlow != null && bar.OrderFlow.IsAvailable && bar.OrderFlow.BarDelta > 0, 10, "Order flow confirmed the bullish trap."),
 				CreateFactor("Ask imbalance levels", bar.OrderFlow != null ? bar.OrderFlow.AskImbalanceLevels : 0, bar.OrderFlow != null && bar.OrderFlow.IsAvailable ? NormalizeAbove(bar.OrderFlow.AskImbalanceLevels, 1.0, settings.ImbalanceLevelNormalizationSpan) : 0, 10, "Ask imbalance expanded on the reversal."),
 				CreateFactor("Breakout zone confirmation", bullishZoneConfirmation, bullishZoneConfirmation, 15, "Positive delta accumulated below the failed breakout level.")
 			};
 
-			score.SetScores(SumContributions(bullishFactors), SumContributions(bearishFactors), "Break below prior low failed and reclaimed", "Break above prior high failed and reclaimed", bullishFactors, bearishFactors);
+			double bullish = SumContributions(bullishFactors);
+			double bearish = SumContributions(bearishFactors);
+
+			if (bar.BreakBelowTicks < settings.BreakoutExcursionTicks)
+			{
+				bullish = 0;
+				AppendAdjustedFactor(ref bullishFactors, "Breakout gate", bar.BreakBelowTicks, 0, 0, "No genuine break below the prior low; failed-breakout suppressed.");
+			}
+
+			if (bar.BreakAboveTicks < settings.BreakoutExcursionTicks)
+			{
+				bearish = 0;
+				AppendAdjustedFactor(ref bearishFactors, "Breakout gate", bar.BreakAboveTicks, 0, 0, "No genuine break above the prior high; failed-breakout suppressed.");
+			}
+
+			score.SetScores(bullish, bearish, "Break below prior low failed and reclaimed", "Break above prior high failed and reclaimed", bullishFactors, bearishFactors);
 		}
 
 		private static void EvaluateLiquiditySweep(BarData bar, EngineSettings settings, SignalScore score)
@@ -214,7 +230,65 @@ namespace Intent.Engine.Signals
 				CreateFactor("Breakout zone confirmation", bullishZoneConfirmation, bullishZoneConfirmation, 10, "Positive delta appeared in the swept zone.")
 			};
 
-			score.SetScores(SumContributions(bullishFactors), SumContributions(bearishFactors), "Sell-side sweep and fast reclaim", "Buy-side sweep and fast reclaim", bullishFactors, bearishFactors);
+			double bullish = SumContributions(bullishFactors);
+			double bearish = SumContributions(bearishFactors);
+
+			if (bar.BreakBelowTicks < settings.BreakoutExcursionTicks)
+			{
+				bullish = 0;
+				AppendAdjustedFactor(ref bullishFactors, "Sweep gate", bar.BreakBelowTicks, 0, 0, "No genuine sweep below the prior low; sweep suppressed.");
+			}
+
+			if (bar.BreakAboveTicks < settings.BreakoutExcursionTicks)
+			{
+				bearish = 0;
+				AppendAdjustedFactor(ref bearishFactors, "Sweep gate", bar.BreakAboveTicks, 0, 0, "No genuine sweep above the prior high; sweep suppressed.");
+			}
+
+			score.SetScores(bullish, bearish, "Sell-side sweep and fast reclaim", "Buy-side sweep and fast reclaim", bullishFactors, bearishFactors);
+		}
+
+		private static void EvaluateBreakoutContinuation(BarData bar, EngineSettings settings, SignalScore score)
+		{
+			double bullishZoneContinuation = PriceLevelContinuation(bar, settings, false);
+			double bearishZoneContinuation = PriceLevelContinuation(bar, settings, true);
+			double closeThroughTicksAbove = bar.Close > bar.PriorSwingHigh ? (bar.Close - bar.PriorSwingHigh) / Math.Max(bar.TickSize, 0.0000001) : 0;
+			double closeThroughTicksBelow = bar.Close < bar.PriorSwingLow ? (bar.PriorSwingLow - bar.Close) / Math.Max(bar.TickSize, 0.0000001) : 0;
+
+			SignalFactor[] bullishFactors = new[]
+			{
+				CreateFactor("Break above ticks", bar.BreakAboveTicks, NormalizeAbove(bar.BreakAboveTicks, settings.BreakoutExcursionTicks, settings.BreakoutNormalizationSpan), 25, "Price expanded above the prior high."),
+				CreateFactor("Close above level", closeThroughTicksAbove, NormalizeAbove(closeThroughTicksAbove, settings.BreakoutCloseThroughLevelTicks, settings.BreakoutNormalizationSpan), 25, "Close held above the prior high."),
+				CreateFactor("Ask imbalance continuation", bar.OrderFlow != null ? bar.OrderFlow.AskImbalanceLevels : 0, bar.OrderFlow != null && bar.OrderFlow.IsAvailable ? NormalizeAbove(bar.OrderFlow.AskImbalanceLevels, 1.0, settings.ImbalanceLevelNormalizationSpan) : 0, 15, "Aggressive buyers stayed active through the break."),
+				CreateFactor("Volume spike", bar.VolumeSpike, NormalizeAbove(bar.VolumeSpike, settings.BreakoutVolumeSpikeThreshold, settings.VolumeSpikeNormalizationSpan), 15, "Participation expanded on the break."),
+				CreateFactor("Zone continuation", bullishZoneContinuation, bullishZoneContinuation, 20, "Positive delta held beyond the breakout level.")
+			};
+
+			SignalFactor[] bearishFactors = new[]
+			{
+				CreateFactor("Break below ticks", bar.BreakBelowTicks, NormalizeAbove(bar.BreakBelowTicks, settings.BreakoutExcursionTicks, settings.BreakoutNormalizationSpan), 25, "Price expanded below the prior low."),
+				CreateFactor("Close below level", closeThroughTicksBelow, NormalizeAbove(closeThroughTicksBelow, settings.BreakoutCloseThroughLevelTicks, settings.BreakoutNormalizationSpan), 25, "Close held below the prior low."),
+				CreateFactor("Bid imbalance continuation", bar.OrderFlow != null ? bar.OrderFlow.BidImbalanceLevels : 0, bar.OrderFlow != null && bar.OrderFlow.IsAvailable ? NormalizeAbove(bar.OrderFlow.BidImbalanceLevels, 1.0, settings.ImbalanceLevelNormalizationSpan) : 0, 15, "Aggressive sellers stayed active through the break."),
+				CreateFactor("Volume spike", bar.VolumeSpike, NormalizeAbove(bar.VolumeSpike, settings.BreakoutVolumeSpikeThreshold, settings.VolumeSpikeNormalizationSpan), 15, "Participation expanded on the break."),
+				CreateFactor("Zone continuation", bearishZoneContinuation, bearishZoneContinuation, 20, "Negative delta held beyond the breakout level.")
+			};
+
+			double bullish = SumContributions(bullishFactors);
+			double bearish = SumContributions(bearishFactors);
+
+			if (bar.ReclaimBelowHighTicks >= settings.ReclaimTicks)
+			{
+				bullish *= 0.45;
+				AppendAdjustedFactor(ref bullishFactors, "Failure penalty", bar.ReclaimBelowHighTicks, 0.45, bullish, "Bullish continuation penalized because price reclaimed back below the breakout level.");
+			}
+
+			if (bar.ReclaimAboveLowTicks >= settings.ReclaimTicks)
+			{
+				bearish *= 0.45;
+				AppendAdjustedFactor(ref bearishFactors, "Failure penalty", bar.ReclaimAboveLowTicks, 0.45, bearish, "Bearish continuation penalized because price reclaimed back above the breakout level.");
+			}
+
+			score.SetScores(bullish, bearish, "Break above prior high held and continued", "Break below prior low held and continued", bullishFactors, bearishFactors);
 		}
 
 		private static double PriceLevelConfirmation(BarData bar, EngineSettings settings, bool aboveBreakout)
@@ -250,24 +324,63 @@ namespace Intent.Engine.Signals
 			return confirming ? NormalizeAbove(normalized, settings.BreakoutZoneDeltaBaseline, settings.BreakoutZoneDeltaNormalizationSpan) : 0;
 		}
 
+		private static double PriceLevelContinuation(BarData bar, EngineSettings settings, bool belowBreakout)
+		{
+			if (bar.OrderFlow == null || bar.OrderFlow.PriceLevels == null || bar.OrderFlow.PriceLevels.Count == 0)
+				return 0;
+
+			double breakoutPrice = belowBreakout ? bar.PriorSwingLow : bar.PriorSwingHigh;
+			long directionalDelta = 0;
+			long directionalVolume = 0;
+			List<OrderFlowPriceLevel> orderedLevels = new List<OrderFlowPriceLevel>(bar.OrderFlow.PriceLevels);
+			orderedLevels.Sort((left, right) => left.Price.CompareTo(right.Price));
+
+			foreach (OrderFlowPriceLevel level in orderedLevels)
+			{
+				if (belowBreakout && level.Price <= breakoutPrice)
+				{
+					directionalDelta += level.Delta;
+					directionalVolume += level.TotalVolume;
+				}
+				else if (!belowBreakout && level.Price >= breakoutPrice)
+				{
+					directionalDelta += level.Delta;
+					directionalVolume += level.TotalVolume;
+				}
+			}
+
+			if (directionalVolume <= 0)
+				return 0;
+
+			double normalized = SignalMath.SafeRatio(Math.Abs(directionalDelta), directionalVolume);
+			bool confirming = belowBreakout ? directionalDelta < 0 : directionalDelta > 0;
+			return confirming ? NormalizeAbove(normalized, settings.BreakoutZoneDeltaBaseline, settings.BreakoutZoneDeltaNormalizationSpan) : 0;
+		}
+
 		private static void FinalizeScores(BarData bar, EngineSettings settings, SignalResult result)
 		{
 			ApplyContradictorySignalSuppression(result, settings);
 
+			double totalWeight = settings.ImbalanceWeight + settings.AbsorptionWeight + settings.FailedBreakoutWeight + settings.LiquiditySweepWeight + settings.BreakoutContinuationWeight;
+			if (totalWeight <= 0)
+				totalWeight = 1.0;
+
 			SignalFactor[] bullishScoreFactors = new[]
 			{
-				CreateFactor("Imbalance weighted", result.Imbalance.Bullish, result.Imbalance.Bullish / 100.0, settings.ImbalanceWeight * 100.0, "Weighted imbalance contribution."),
-				CreateFactor("Absorption weighted", result.Absorption.Bullish, result.Absorption.Bullish / 100.0, settings.AbsorptionWeight * 100.0, "Weighted absorption contribution."),
-				CreateFactor("Failed breakout weighted", result.FailedBreakout.Bullish, result.FailedBreakout.Bullish / 100.0, settings.FailedBreakoutWeight * 100.0, "Weighted failed-breakout contribution."),
-				CreateFactor("Liquidity sweep weighted", result.LiquiditySweep.Bullish, result.LiquiditySweep.Bullish / 100.0, settings.LiquiditySweepWeight * 100.0, "Weighted sweep contribution.")
+				CreateFactor("Imbalance weighted", result.Imbalance.Bullish, result.Imbalance.Bullish / 100.0, settings.ImbalanceWeight / totalWeight * 100.0, "Weighted imbalance contribution."),
+				CreateFactor("Absorption weighted", result.Absorption.Bullish, result.Absorption.Bullish / 100.0, settings.AbsorptionWeight / totalWeight * 100.0, "Weighted absorption contribution."),
+				CreateFactor("Failed breakout weighted", result.FailedBreakout.Bullish, result.FailedBreakout.Bullish / 100.0, settings.FailedBreakoutWeight / totalWeight * 100.0, "Weighted failed-breakout contribution."),
+				CreateFactor("Liquidity sweep weighted", result.LiquiditySweep.Bullish, result.LiquiditySweep.Bullish / 100.0, settings.LiquiditySweepWeight / totalWeight * 100.0, "Weighted sweep contribution."),
+				CreateFactor("Breakout continuation weighted", result.BreakoutContinuation.Bullish, result.BreakoutContinuation.Bullish / 100.0, settings.BreakoutContinuationWeight / totalWeight * 100.0, "Weighted breakout-continuation contribution.")
 			};
 
 			SignalFactor[] bearishScoreFactors = new[]
 			{
-				CreateFactor("Imbalance weighted", result.Imbalance.Bearish, result.Imbalance.Bearish / 100.0, settings.ImbalanceWeight * 100.0, "Weighted imbalance contribution."),
-				CreateFactor("Absorption weighted", result.Absorption.Bearish, result.Absorption.Bearish / 100.0, settings.AbsorptionWeight * 100.0, "Weighted absorption contribution."),
-				CreateFactor("Failed breakout weighted", result.FailedBreakout.Bearish, result.FailedBreakout.Bearish / 100.0, settings.FailedBreakoutWeight * 100.0, "Weighted failed-breakout contribution."),
-				CreateFactor("Liquidity sweep weighted", result.LiquiditySweep.Bearish, result.LiquiditySweep.Bearish / 100.0, settings.LiquiditySweepWeight * 100.0, "Weighted sweep contribution.")
+				CreateFactor("Imbalance weighted", result.Imbalance.Bearish, result.Imbalance.Bearish / 100.0, settings.ImbalanceWeight / totalWeight * 100.0, "Weighted imbalance contribution."),
+				CreateFactor("Absorption weighted", result.Absorption.Bearish, result.Absorption.Bearish / 100.0, settings.AbsorptionWeight / totalWeight * 100.0, "Weighted absorption contribution."),
+				CreateFactor("Failed breakout weighted", result.FailedBreakout.Bearish, result.FailedBreakout.Bearish / 100.0, settings.FailedBreakoutWeight / totalWeight * 100.0, "Weighted failed-breakout contribution."),
+				CreateFactor("Liquidity sweep weighted", result.LiquiditySweep.Bearish, result.LiquiditySweep.Bearish / 100.0, settings.LiquiditySweepWeight / totalWeight * 100.0, "Weighted sweep contribution."),
+				CreateFactor("Breakout continuation weighted", result.BreakoutContinuation.Bearish, result.BreakoutContinuation.Bearish / 100.0, settings.BreakoutContinuationWeight / totalWeight * 100.0, "Weighted breakout-continuation contribution.")
 			};
 
 			double bullScore = SumContributions(bullishScoreFactors);
@@ -304,13 +417,143 @@ namespace Intent.Engine.Signals
 
 			if (Math.Abs(result.BullScore - result.BearScore) < settings.NeutralityBuffer || result.IntentScore < settings.SignalThreshold)
 			{
+				result.TrendDirection = DetermineTrendDirection(bar, settings);
+				result.SignalClassification = IntentSignalClassification.Neutral;
 				result.Direction = IntentDirection.Neutral;
+				result.RecommendedTradeAction = TradeAction.StandAside;
+				result.EntryStyle = "None";
+				result.StopLevel = string.Empty;
 				result.DominantReason = "No dominant intent";
 				return;
 			}
 
 			result.Direction = result.BullScore > result.BearScore ? IntentDirection.Bullish : IntentDirection.Bearish;
+			result.TrendDirection = DetermineTrendDirection(bar, settings);
+			result.SignalClassification = ClassifySignal(bar, settings, result);
+			ApplyTradeRules(bar, settings, result);
 			result.DominantReason = result.GetDominantSignal(result.Direction).GetReason(result.Direction);
+		}
+
+		private static void ApplyTradeRules(BarData bar, EngineSettings settings, SignalResult result)
+		{
+			result.RecommendedTradeAction = TradeAction.StandAside;
+			result.EntryStyle = "None";
+			result.StopLevel = string.Empty;
+
+			if (bar == null || result == null || result.Direction == IntentDirection.Neutral)
+				return;
+
+			double threshold = settings.SignalThreshold;
+			string entryStyle = "Observe";
+
+			if (result.SignalClassification == IntentSignalClassification.Continuation)
+			{
+				threshold = settings.ContinuationTradeThreshold;
+				entryStyle = "Follow";
+			}
+			else if (result.SignalClassification == IntentSignalClassification.Reversal)
+			{
+				threshold = settings.ReversalTradeThreshold;
+				entryStyle = "ConfirmThenEnter";
+			}
+			else if (result.SignalClassification == IntentSignalClassification.Pullback)
+			{
+				threshold = settings.PullbackTradeThreshold;
+				entryStyle = "ReducedSize";
+			}
+
+			if (result.IntentScore < threshold)
+			{
+				result.EntryStyle = "Observe";
+				return;
+			}
+
+			result.RecommendedTradeAction = result.Direction == IntentDirection.Bullish ? TradeAction.Buy : TradeAction.Sell;
+			result.EntryStyle = entryStyle;
+			result.StopLevel = BuildStopLevel(bar, result.Direction);
+		}
+
+		private static string BuildStopLevel(BarData bar, IntentDirection direction)
+		{
+			if (bar == null)
+				return string.Empty;
+
+			if (direction == IntentDirection.Bullish)
+				return string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0:0.#####}", bar.PriorSwingLow);
+			if (direction == IntentDirection.Bearish)
+				return string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0:0.#####}", bar.PriorSwingHigh);
+
+			return string.Empty;
+		}
+
+		private static IntentDirection DetermineTrendDirection(BarData bar, EngineSettings settings)
+		{
+			if (bar == null)
+				return IntentDirection.Neutral;
+
+			if (bar.PriorIntentScore >= settings.SignalThreshold && bar.PriorSignalDirection != IntentDirection.Neutral)
+				return bar.PriorSignalDirection;
+
+			double priorRange = bar.PriorSwingHigh - bar.PriorSwingLow;
+			if (priorRange <= 0)
+				return IntentDirection.Neutral;
+
+			if (bar.Close >= bar.PriorSwingHigh || bar.BreakAboveTicks >= settings.BreakoutExcursionTicks)
+				return IntentDirection.Bullish;
+			if (bar.Close <= bar.PriorSwingLow || bar.BreakBelowTicks >= settings.BreakoutExcursionTicks)
+				return IntentDirection.Bearish;
+
+			double relativeClose = SignalMath.SafeRatio(bar.Close - bar.PriorSwingLow, priorRange);
+			if (relativeClose >= settings.BullishTrendStructureThreshold)
+				return IntentDirection.Bullish;
+			if (relativeClose <= settings.BearishTrendStructureThreshold)
+				return IntentDirection.Bearish;
+
+			return IntentDirection.Neutral;
+		}
+
+		private static IntentSignalClassification ClassifySignal(BarData bar, EngineSettings settings, SignalResult result)
+		{
+			if (result == null || result.Direction == IntentDirection.Neutral)
+				return IntentSignalClassification.Neutral;
+
+			if (result.TrendDirection == IntentDirection.Neutral)
+				return IsReversalCandidate(bar, settings, result, result.Direction) ? IntentSignalClassification.Reversal : IntentSignalClassification.Continuation;
+
+			if (result.TrendDirection == result.Direction)
+				return IntentSignalClassification.Continuation;
+
+			return IsReversalCandidate(bar, settings, result, result.Direction) ? IntentSignalClassification.Reversal : IntentSignalClassification.Pullback;
+		}
+
+		private static bool IsReversalCandidate(BarData bar, EngineSettings settings, SignalResult result, IntentDirection direction)
+		{
+			if (bar == null || result == null)
+				return false;
+
+			SignalScore dominantSignal = result.GetDominantSignal(direction);
+			IntentSignalType dominantSignalType = dominantSignal == null ? IntentSignalType.OrderFlowImbalance : dominantSignal.SignalType;
+			double dominantScore = dominantSignal == null ? 0 : dominantSignal.GetScore(direction);
+			double trapScore = Math.Max(result.FailedBreakout.GetScore(direction), result.LiquiditySweep.GetScore(direction));
+			bool trapStructure = direction == IntentDirection.Bullish
+				? bar.BreakBelowTicks >= settings.BreakoutExcursionTicks && bar.ReclaimAboveLowTicks >= settings.ReclaimTicks
+				: bar.BreakAboveTicks >= settings.BreakoutExcursionTicks && bar.ReclaimBelowHighTicks >= settings.ReclaimTicks;
+			bool structuralReclaim = direction == IntentDirection.Bullish
+				? bar.ReclaimAboveLowTicks >= settings.ReclaimTicks || bar.CloseLocation >= settings.ReversalCloseLocationThreshold
+				: bar.ReclaimBelowHighTicks >= settings.ReclaimTicks || bar.CloseLocation <= (1.0 - settings.ReversalCloseLocationThreshold);
+
+			bool trapSignal = trapScore >= settings.SignalThreshold
+				&& (dominantSignalType == IntentSignalType.FailedBreakout
+					|| dominantSignalType == IntentSignalType.LiquiditySweep
+					|| trapScore >= (dominantScore - 5));
+			if (!trapSignal && trapStructure && trapScore >= (settings.SignalThreshold - 10))
+				trapSignal = true;
+			bool absorbedExhaustion = dominantSignal != null
+				&& dominantSignalType == IntentSignalType.Absorption
+				&& result.Absorption.GetScore(direction) >= (settings.SignalThreshold + 5);
+			bool confluence = CountStrongSignals(result, direction, settings.SignalThreshold) >= 2;
+
+			return structuralReclaim && (trapSignal || (absorbedExhaustion && confluence));
 		}
 
 		private static void ApplyContradictorySignalSuppression(SignalResult result, EngineSettings settings)
@@ -354,12 +597,26 @@ namespace Intent.Engine.Signals
 		private static int CountStrongSignals(SignalResult result, IntentDirection direction, int signalThreshold)
 		{
 			int count = 0;
+			bool bothImbalanceAndAbsorption = result.Imbalance.GetScore(direction) >= signalThreshold
+				&& result.Absorption.GetScore(direction) >= signalThreshold;
+			bool countedImbalanceAbsorption = false;
+
 			foreach (SignalScore signal in result.Signals)
 			{
-				if ((signal == result.Imbalance || signal == result.Absorption) && result.Imbalance.GetScore(direction) >= signalThreshold && result.Absorption.GetScore(direction) >= signalThreshold)
+				if (signal.GetScore(direction) < signalThreshold)
 					continue;
-				if (signal.GetScore(direction) >= signalThreshold)
-					count++;
+
+				if (bothImbalanceAndAbsorption && (signal == result.Imbalance || signal == result.Absorption))
+				{
+					if (!countedImbalanceAbsorption)
+					{
+						countedImbalanceAbsorption = true;
+						count++;
+					}
+					continue;
+				}
+
+				count++;
 			}
 			return count;
 		}

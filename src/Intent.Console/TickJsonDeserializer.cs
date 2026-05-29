@@ -36,27 +36,28 @@ namespace Intent.StreamRunner
 					return false;
 				}
 
-				if (!IsFinite(payload.Price))
+				if (payload.Price == null || !IsFinite(payload.Price.Value))
 				{
 					error = "Missing or invalid price.";
 					return false;
 				}
 
-				if (payload.Volume <= 0)
+				if (payload.Volume == null || payload.Volume.Value <= 0)
 				{
 					error = "Missing or invalid volume.";
 					return false;
 				}
 
-				double bid = IsFinite(payload.Bid) ? payload.Bid : payload.Price;
-				double ask = IsFinite(payload.Ask) ? payload.Ask : payload.Price;
+				double price = payload.Price.Value;
+				double bid = payload.Bid != null && IsFinite(payload.Bid.Value) ? payload.Bid.Value : price;
+				double ask = payload.Ask != null && IsFinite(payload.Ask.Value) ? payload.Ask.Value : price;
 
 				tick = new TickData
 				{
 					TimestampUtc = timestampUtc.Kind == DateTimeKind.Utc ? timestampUtc : timestampUtc.ToUniversalTime(),
 					Instrument = payload.Instrument ?? string.Empty,
-					Price = payload.Price,
-					Volume = payload.Volume,
+					Price = price,
+					Volume = payload.Volume.Value,
 					Bid = bid,
 					Ask = ask,
 					IsBuyerInitiated = payload.IsBuyerInitiated ?? payload.BuyerInitiated ?? false
@@ -106,16 +107,16 @@ namespace Intent.StreamRunner
 			public string Instrument { get; set; }
 
 			[DataMember(Name = "price", EmitDefaultValue = false)]
-			public double Price { get; set; }
+			public double? Price { get; set; }
 
 			[DataMember(Name = "volume", EmitDefaultValue = false)]
-			public long Volume { get; set; }
+			public long? Volume { get; set; }
 
 			[DataMember(Name = "bid", EmitDefaultValue = false)]
-			public double Bid { get; set; }
+			public double? Bid { get; set; }
 
 			[DataMember(Name = "ask", EmitDefaultValue = false)]
-			public double Ask { get; set; }
+			public double? Ask { get; set; }
 
 			[DataMember(Name = "isBuyerInitiated", EmitDefaultValue = false)]
 			public bool? IsBuyerInitiated { get; set; }
