@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Intent.Engine.Models;
 using Intent.Engine.Signals;
@@ -25,6 +26,20 @@ namespace Intent.Engine.State
 		public SessionContext Session { get; private set; }
 		public IntentDirection LastSignalDirection { get; private set; }
 		public double LastIntentScore { get; private set; }
+
+		// UTC hour (0-23) at which a new trading session begins. 0 (default) preserves UTC-midnight
+		// rollover. For CME-style futures the calendar day boundary (00:00 UTC) falls mid-session, so
+		// set this to the exchange session-open hour in UTC (e.g. 22 for ~17:00 ET) so session
+		// high/low/cumulative-delta reset on the real session boundary rather than mid-afternoon.
+		public int SessionRolloverHourUtc { get; set; }
+
+		private DateTime SessionDateFor(DateTime timestampUtc)
+		{
+			int hour = SessionRolloverHourUtc;
+			if (hour <= 0 || hour > 23)
+				return timestampUtc.Date;
+			return timestampUtc.AddHours(24 - hour).Date;
+		}
 
 		public double PriorSwingHigh
 		{
@@ -63,8 +78,9 @@ namespace Intent.Engine.State
 			while (swingLows.Count > structureLookback)
 				swingLows.Dequeue();
 
-			if (Session.BarsInSession == 0 || Session.SessionDateUtc != bar.TimestampUtc.Date)
-				Session.Reset(bar.TimestampUtc.Date, bar.High, bar.Low);
+			DateTime sessionDate = SessionDateFor(bar.TimestampUtc);
+			if (Session.BarsInSession == 0 || Session.SessionDateUtc != sessionDate)
+				Session.Reset(sessionDate, bar.High, bar.Low);
 
 			Session.Update(bar.High, bar.Low, bar.OrderFlow != null ? bar.OrderFlow.BarDelta : 0);
 		}

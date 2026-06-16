@@ -2,7 +2,34 @@
 
 `IntentLayerV01` is now split into a standalone engine plus a NinjaTrader adapter.
 
+## Safety remediation (audit fixes)
+
+A desk-operations audit found execution-safety and quant-validity gaps. These are now fixed (all
+changes compile-verified including the strategy, and covered by the build gate `tools\Compile-Check.ps1`):
+
+- **Closed-bar trading (no repaint).** The strategy runs `Calculate.OnBarClose` and decides/enters on
+  the last *closed* bar. Previously `OnEachTick` fed the still-forming bar to the engine, so signals
+  repainted and live diverged from any bar-close backtest.
+- **No naked dashboard orders.** Manual `buy_market`/`sell_market`/`reverse` now always attach a
+  protective stop (and target if enabled), bound to the dashboard entry name.
+- **Risk controls that actually halt.** The daily loss limit includes open-position P&L, *latches* a
+  session kill switch and flattens on breach, applies to manual/dashboard orders too, persists across
+  reload, and there is a `MaxContracts` cap. Protective-stop rejection fails safe (flatten + halt).
+- **Higher-timeframe filter uses order flow** (`AddVolumetric`) and is evaluated on the closed bar.
+- **Authenticated control surface.** `/api/control`, `/api/command`, `/api/strategy-status` require a
+  per-session token (written to `%TEMP%\intent-dashboard-token.txt`) plus loopback-Host and
+  non-cross-site-Origin checks. The dashboard HTTP/file I/O runs on a background thread, never the
+  NinjaTrader instrument thread.
+- **Net-P&L backtester.** `Intent.Sweep` now runs an event-driven, cost-aware backtester
+  (entry next bar, explicit stop/target, commission + slippage) and ranks configs by post-cost
+  expectancy with a pooled out-of-sample number — not cost-free signal F1. New flags:
+  `--commission-per-side`, `--slippage-ticks`, `--tick-value`, `--min-trades-for-ranking`. Verify the
+  P&L math with `Intent.Sweep.exe --selftest`.
+- Capital protections (`UseDailyLossLimit`, `UseFlatBeforeClose`) now default ON.
+
 Bootstrap:
+- run `powershell -ExecutionPolicy Bypass -File .\tools\Compile-Check.ps1` (build gate: compiles all
+  projects incl. the strategy, runs behavior tests + backtester self-test)
 - run `powershell -ExecutionPolicy Bypass -File .\tools\Refresh-Indexes.ps1`
 - run `powershell -ExecutionPolicy Bypass -File .\tools\Validate-Behavior.ps1`
 - run `powershell -ExecutionPolicy Bypass -File .\tools\Run-Verification.ps1`
@@ -29,11 +56,13 @@ Files:
 - `IntentLayerV01.Models.cs`: NinjaTrader-only visual theme models
 - `IntentLayerV01.Rendering.cs`: NinjaTrader chart rendering layer
 
-What it detects:
+What it detects (5 weighted detectors; composite weights are renormalized at runtime so they need not
+sum to exactly 1.0):
 - order-flow imbalance
 - absorption
 - failed breakouts
 - liquidity sweeps
+- breakout continuation
 
 Outputs:
 - `IntentScore` plot: 0-100

@@ -362,7 +362,11 @@ namespace Intent.Engine.Tests
 			SignalResult result = Analyze(bar);
 
 			AssertTrue("Breakout continuation should register a strong bearish continuation score.", result.BreakoutContinuation.Bearish >= 65);
-			AssertEqual("Breakout continuation should be dominant signal type.", IntentSignalType.BreakoutContinuation, result.GetDominantSignal(IntentDirection.Bearish).SignalType);
+			// Dominance is now the highest-scoring detector (deterministic, max-based). On a clean
+			// downside break the stacked bid imbalance outscores the continuation factor, so imbalance
+			// is the dominant signal. This previously returned a lower-scoring signal via specificity
+			// promotion, which could mis-drive reversal classification and the trade threshold.
+			AssertEqual("Dominant signal should be the highest-scoring detector.", IntentSignalType.OrderFlowImbalance, result.GetDominantSignal(IntentDirection.Bearish).SignalType);
 			AssertEqual("Aligned downside break should classify as continuation.", IntentSignalClassification.Continuation, result.SignalClassification);
 			AssertEqual("Aligned downside break should preserve bearish trend.", IntentDirection.Bearish, result.TrendDirection);
 			AssertEqual("Aligned downside break above threshold should produce a sell action.", TradeAction.Sell, result.RecommendedTradeAction);

@@ -13,6 +13,7 @@ namespace Intent.StreamRunner
 	{
 		private const string DashboardControlFileName = "intent-dashboard-control.txt";
 		private const string DashboardStatusFileName = "intent-dashboard-status.json";
+		private const string DashboardTokenFileName = "intent-dashboard-token.txt";
 		private const int ClientReadTimeoutMs = 3000;
 		private readonly RunnerLogger logger;
 		private readonly TcpListener listener;
@@ -20,7 +21,9 @@ namespace Intent.StreamRunner
 		private readonly Thread thread;
 		private volatile bool stopRequested;
 		private long nextCommandId;
-		private string latestCommandPayload = "{}";
+		private readonly List<string> pendingCommands = new List<string>();
+		private readonly object commandLock = new object();
+		private readonly string sessionToken;
 		private string latestStatusJson = string.Empty;
 		private static readonly string DefaultStatusJson = "{\"connected\":false,\"mode\":\"Unknown\",\"executionEnabled\":false,\"position\":\"Flat\"}";
 		private static readonly object fileLock = new object();
@@ -37,8 +40,13 @@ namespace Intent.StreamRunner
 			Port = port;
 			this.logger = logger;
 			clients = new List<SseClient>();
+			sessionToken = Guid.NewGuid().ToString("N");
 			if (port > 0)
 			{
+				// Per-session shared secret: written to a user-temp file that the local strategy reads.
+				// Command/status endpoints require it, which blocks unauthenticated local processes and
+				// (together with the Host/Origin checks) cross-site/DNS-rebinding browser callers.
+				WriteAtomicText(GetDashboardTokenPath(), sessionToken);
 				listener = new TcpListener(IPAddress.Parse("127.0.0.1"), port);
 				thread = new Thread(ListenLoop);
 				thread.IsBackground = true;
@@ -115,6 +123,16 @@ namespace Intent.StreamRunner
 		public void Dispose()
 		{
 			stopRequested = true;
+			try
+			{
+				string tokenPath = GetDashboardTokenPath();
+				if (File.Exists(tokenPath))
+					File.Delete(tokenPath);
+			}
+			catch
+			{
+			}
+
 			if (listener != null)
 			{
 				try
@@ -186,14 +204,25 @@ namespace Intent.StreamRunner
 				string method = ParseMethod(requestLine);
 				string path = ParsePath(requestLine);
 				int contentLength = 0;
+				string hostHeader = string.Empty;
+				string originHeader = string.Empty;
+				string tokenHeader = string.Empty;
 				string headerLine;
 				do
 				{
 					headerLine = reader.ReadLine();
-					if (!string.IsNullOrEmpty(headerLine) && headerLine.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase))
+					if (string.IsNullOrEmpty(headerLine))
+						break;
+					if (headerLine.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase))
 						int.TryParse(headerLine.Substring("Content-Length:".Length).Trim(), out contentLength);
+					else if (headerLine.StartsWith("Host:", StringComparison.OrdinalIgnoreCase))
+						hostHeader = headerLine.Substring("Host:".Length).Trim();
+					else if (headerLine.StartsWith("Origin:", StringComparison.OrdinalIgnoreCase))
+						originHeader = headerLine.Substring("Origin:".Length).Trim();
+					else if (headerLine.StartsWith("X-Intent-Token:", StringComparison.OrdinalIgnoreCase))
+						tokenHeader = headerLine.Substring("X-Intent-Token:".Length).Trim();
 				}
-				while (!string.IsNullOrEmpty(headerLine));
+				while (true);
 
 				if (string.Equals(path, "/events", StringComparison.OrdinalIgnoreCase))
 				{
@@ -208,8 +237,17 @@ namespace Intent.StreamRunner
 					return;
 				}
 
+				// Endpoints below carry trade authority (commands the strategy executes, or status from
+				// the strategy). They require the per-session token and a loopback Host / non-cross-site
+				// Origin, so an unauthenticated local process or a malicious browser tab cannot drive them.
 				if (string.Equals(path, "/api/command", StringComparison.OrdinalIgnoreCase))
 				{
+					if (!IsAuthorized(hostHeader, originHeader, tokenHeader))
+					{
+						WriteForbidden(stream);
+						return;
+					}
+
 					HandleCommand(stream);
 					return;
 				}
@@ -218,13 +256,27 @@ namespace Intent.StreamRunner
 
 				if (string.Equals(path, "/api/control", StringComparison.OrdinalIgnoreCase) && string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase))
 				{
-					HandleControl(stream, ReadBody(reader, safeContentLength));
+					string controlBody = ReadBody(reader, safeContentLength);
+					if (!IsAuthorized(hostHeader, originHeader, tokenHeader))
+					{
+						WriteForbidden(stream);
+						return;
+					}
+
+					HandleControl(stream, controlBody);
 					return;
 				}
 
 				if (string.Equals(path, "/api/strategy-status", StringComparison.OrdinalIgnoreCase) && string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase))
 				{
-					HandleStrategyStatus(stream, ReadBody(reader, safeContentLength));
+					string statusBody = ReadBody(reader, safeContentLength);
+					if (!IsAuthorized(hostHeader, originHeader, tokenHeader))
+					{
+						WriteForbidden(stream);
+						return;
+					}
+
+					HandleStrategyStatus(stream, statusBody);
 					return;
 				}
 
@@ -275,7 +327,7 @@ namespace Intent.StreamRunner
 			stream.Write(headerBytes, 0, headerBytes.Length);
 			stream.Flush();
 
-			connection.SendTimeout = 0;
+			connection.SendTimeout = ClientReadTimeoutMs;
 			StreamWriter writer = new StreamWriter(stream, Encoding.UTF8, 4096);
 			writer.AutoFlush = true;
 			writer.Write(": connected\n\n");
@@ -295,14 +347,27 @@ namespace Intent.StreamRunner
 
 		private void HandleCommand(NetworkStream stream)
 		{
-			string payload = latestCommandPayload;
+			string payload;
+			lock (commandLock)
+			{
+				payload = pendingCommands.Count == 0 ? string.Empty : string.Join("\n", pendingCommands.ToArray());
+				pendingCommands.Clear();
+			}
+
 			WriteResponse(stream, "text/plain; charset=utf-8", payload);
 		}
 
 		private void HandleControl(NetworkStream stream, string body)
 		{
 			string command = BuildCommandPayload(body);
-			latestCommandPayload = command;
+			lock (commandLock)
+			{
+				// FIFO queue (not a single slot) so two rapidly-issued commands are not coalesced/dropped.
+				pendingCommands.Add(command);
+				while (pendingCommands.Count > 64)
+					pendingCommands.RemoveAt(0);
+			}
+
 			WriteAtomicText(GetDashboardControlPath(), command);
 			long commandId = ParseCommandId(command);
 			WriteResponse(stream, "application/json; charset=utf-8", "{\"ok\":true,\"commandId\":" + commandId.ToString(CultureInfo.InvariantCulture) + "}");
@@ -404,6 +469,44 @@ namespace Intent.StreamRunner
 			return Path.Combine(Path.GetTempPath(), DashboardStatusFileName);
 		}
 
+		private static string GetDashboardTokenPath()
+		{
+			return Path.Combine(Path.GetTempPath(), DashboardTokenFileName);
+		}
+
+		private bool IsAuthorized(string host, string origin, string token)
+		{
+			if (!IsLoopbackHost(host))
+				return false;
+			if (!string.IsNullOrEmpty(origin) && !IsLoopbackOrigin(origin))
+				return false;
+			return !string.IsNullOrEmpty(sessionToken) && string.Equals(token, sessionToken, StringComparison.Ordinal);
+		}
+
+		private static bool IsLoopbackHost(string host)
+		{
+			if (string.IsNullOrEmpty(host))
+				return false;
+			string h = host.Trim().ToLowerInvariant();
+			return h.StartsWith("127.0.0.1") || h.StartsWith("localhost") || h.StartsWith("[::1]");
+		}
+
+		private static bool IsLoopbackOrigin(string origin)
+		{
+			string o = origin.Trim().ToLowerInvariant();
+			return o.Contains("127.0.0.1") || o.Contains("localhost") || o.Contains("[::1]");
+		}
+
+		private static void WriteForbidden(NetworkStream stream)
+		{
+			byte[] payload = Encoding.UTF8.GetBytes("{\"ok\":false,\"error\":\"forbidden\"}");
+			string headers = "HTTP/1.1 403 Forbidden\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: " + payload.Length + "\r\nConnection: close\r\n\r\n";
+			byte[] headerBytes = Encoding.ASCII.GetBytes(headers);
+			stream.Write(headerBytes, 0, headerBytes.Length);
+			stream.Write(payload, 0, payload.Length);
+			stream.Flush();
+		}
+
 		private static void WriteAtomicText(string path, string content)
 		{
 			lock (fileLock)
@@ -422,9 +525,9 @@ namespace Intent.StreamRunner
 			}
 		}
 
-		private static string BuildDashboardHtml()
+		private string BuildDashboardHtml()
 		{
-			return @"<!doctype html>
+			string html = @"<!doctype html>
 <html>
 <head>
   <meta charset='utf-8'>
@@ -576,6 +679,7 @@ namespace Intent.StreamRunner
     </div>
   </div>
   <script>
+    const INTENT_TOKEN = '__INTENT_TOKEN__';
     const statusEl = document.getElementById('status');
     const packetsEl = document.getElementById('packets');
     const signalsEl = document.getElementById('signals');
@@ -693,7 +797,7 @@ namespace Intent.StreamRunner
       try {
         const response = await fetch('/api/control', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Intent-Token': INTENT_TOKEN },
           body,
           signal: controller.signal
         });
@@ -941,6 +1045,8 @@ namespace Intent.StreamRunner
   </script>
 </body>
 </html>";
+
+			return html.Replace("__INTENT_TOKEN__", sessionToken);
 		}
 	}
 }

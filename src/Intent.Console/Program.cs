@@ -7,6 +7,9 @@ namespace Intent.StreamRunner
 	{
 		private static int Main(string[] args)
 		{
+			if (args != null && Array.IndexOf(args, "--selftest") >= 0)
+				return ConsoleSelfTest.Run();
+
 			RunnerOptions options = RunnerOptions.Parse(args);
 			using (RunnerLogger logger = new RunnerLogger(options.LogFilePath))
 			using (DecisionPacketSink packetSink = new DecisionPacketSink(options.PacketOutputPath))

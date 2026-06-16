@@ -1,0 +1,19 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Compiles every project INCLUDING the live auto-trader strategy, runs the engine behavior
+      # tests and the backtester P&L self-test. NinjaTrader assemblies are not present on CI, so the
+      # NinjaTrader compile is skipped there (it is verified locally via tools/Compile-Check.ps1).
+      - name: Build gate
+        shell: powershell
+        run: .\tools\Compile-Check.ps1 -SkipNinjaTrader

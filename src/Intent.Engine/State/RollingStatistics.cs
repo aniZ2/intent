@@ -30,7 +30,11 @@ namespace Intent.Engine.State
 
 		public double Average
 		{
-			get { return values.Count < capacity ? 0 : sum / values.Count; }
+			// Partial-window mean during warmup (ramps in gracefully) instead of returning 0,
+			// which previously zeroed VolumeSpike/RangeExpansion for the first `capacity` bars
+			// and silently disabled those factors on a fresh stream. Use IsReady to gate emission
+			// when a full window is required.
+			get { return values.Count == 0 ? 0 : sum / values.Count; }
 		}
 	}
 }

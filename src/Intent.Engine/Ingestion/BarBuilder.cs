@@ -42,6 +42,16 @@ namespace Intent.Engine.Ingestion
 				return false;
 			}
 
+			if (bucket < currentBarStartUtc)
+			{
+				// Late / out-of-order tick: fold it into the current bar rather than finalizing the
+				// current bar and starting a new one keyed to a bucket in the past. Starting a past
+				// bar would fragment bars, corrupt rolling averages/session extremes, and emit packets
+				// with non-monotonic timestamps.
+				currentBar.AddTick(tick);
+				return false;
+			}
+
 			completedBar = FinalizeCurrentBar();
 			currentBarStartUtc = bucket;
 			currentBar = new MutableBar(tick.Price);

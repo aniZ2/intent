@@ -353,6 +353,10 @@ namespace Intent.Engine.Signals
 
 		public SignalScore GetDominantSignal(IntentDirection direction)
 		{
+			// Dominance is the highest score for the direction. Exact ties break toward the more
+			// specific (structural) signal. This is deterministic and monotonic: it never selects a
+			// signal whose score is lower than another's, which previously could mis-drive reversal
+			// classification and the trade threshold that gates real orders.
 			SignalScore winner = Signals[0];
 			double best = winner.GetScore(direction);
 
@@ -360,27 +364,12 @@ namespace Intent.Engine.Signals
 			{
 				SignalScore candidateSignal = Signals[i];
 				double candidate = candidateSignal.GetScore(direction);
-				if (candidate < best)
+				if (candidate > best ||
+					(candidate == best && GetSpecificityRank(candidateSignal.SignalType) > GetSpecificityRank(winner.SignalType)))
 				{
-					if (winner.SignalType == IntentSignalType.OrderFlowImbalance
-						&& GetSpecificityRank(candidateSignal.SignalType) > GetSpecificityRank(winner.SignalType)
-						&& candidate >= 60
-						&& candidate >= (best - 20))
-					{
-						winner = candidateSignal;
-						best = candidate;
-					}
-					continue;
+					best = candidate;
+					winner = candidateSignal;
 				}
-
-				if (candidate == best)
-				{
-					if (GetSpecificityRank(candidateSignal.SignalType) <= GetSpecificityRank(winner.SignalType))
-						continue;
-				}
-
-				best = candidate;
-				winner = candidateSignal;
 			}
 
 			return winner;

@@ -34,6 +34,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private const string DashboardControlFileName = "intent-dashboard-control.txt";
 		private const string DashboardStatusFileName = "intent-dashboard-status.json";
 		private const string DashboardHeartbeatFileName = "intent-dashboard-heartbeat.txt";
+		private const string DashboardTokenFileName = "intent-dashboard-token.txt";
 		private const string TagCurrentPrice = "Intent.CurrentPrice";
 		private const string TagEntryPrice = "Intent.EntryPrice";
 		private const string TagStopPrice = "Intent.StopPrice";
@@ -77,7 +78,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private int dashboardOrderQuantity = 1;
 		private string lastCommandAcknowledgement = "None";
 		private string lastAppliedCommandAction = "None";
-		private DateTime lastBridgeCommandPollUtc = Core.Globals.MinDate;
+		private DashboardBridge dashboardBridge;
+		private int dashboardTimerInFlight;
 		private SignalResult higherTimeframeAnalysis;
 		private Timer dashboardCommandTimer;
 		private IntentDirection activeRegimeDirection = IntentDirection.Neutral;
@@ -91,6 +93,13 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private int lastAutoSubmissionBar = -1000000;
 		private TradeAction lastAutoSubmissionAction = TradeAction.StandAside;
 		private bool suppressHistoricalStrategyPosition;
+		private bool tradingHaltedForSession;
+		private string haltReason = string.Empty;
+		private Order pendingEntryOrder;
+		private bool persistenceLoaded;
+		private DateTime persistedDayDate = Core.Globals.MinDate;
+		private double persistedDayPnL;
+		private bool persistedHalted;
 
 		protected override void OnStateChange()
 		{
@@ -101,7 +110,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 			{
 				Name = "IntentAutoTraderV01";
 				Description = "Trades Intent engine signals with manual or auto execution modes.";
-				Calculate = Calculate.OnEachTick;
+				// Decide and act on CLOSED bars. The engine's detectors (close location, wick ratios,
+				// reclaim ticks, bar delta) are defined for completed bars; running them on a forming
+				// bar (OnEachTick + barsAgo 0) repaints and makes live diverge from any bar-close
+				// backtest. OnBarClose makes barsAgo 0 the just-closed bar. Dashboard commands stay
+				// responsive via OnMarketData + the control timer.
+				Calculate = Calculate.OnBarClose;
 				EntriesPerDirection = 1;
 				EntryHandling = EntryHandling.AllEntries;
 				IsExitOnSessionCloseStrategy = true;
@@ -109,7 +123,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				IsFillLimitOnTouch = false;
 				MaximumBarsLookBack = MaximumBarsLookBack.TwoHundredFiftySix;
 				OrderFillResolution = OrderFillResolution.Standard;
-				Slippage = 0;
+				Slippage = 1;
 				StartBehavior = StartBehavior.WaitUntilFlat;
 				TimeInForce = TimeInForce.Gtc;
 				TraceOrders = false;
@@ -123,6 +137,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				AllowShorts = true;
 				AllowReversals = true;
 				Quantity = 1;
+				MaxContracts = 10;
 				UseEngineStop = true;
 				UseProfitTarget = true;
 				RewardRiskMultiple = 1.50;
@@ -131,9 +146,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 				DrawManualArrows = true;
 				ManualArrowOffsetTicks = 2;
 				CooldownBars = 0;
-				UseDailyLossLimit = false;
+				// Capital protections default ON. The daily loss limit now includes open-position P&L,
+				// latches a session halt on breach, and applies to manual/dashboard orders too.
+				UseDailyLossLimit = true;
 				MaxDailyLossCurrency = 200;
-				UseFlatBeforeClose = false;
+				UseFlatBeforeClose = true;
 				FlatTime = 155500;
 				EnableDashboardControl = true;
 				DashboardBridgePort = 4110;
@@ -220,7 +237,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 			else if (State == State.Configure)
 			{
 				if (UseHigherTimeframeFilter && HigherTimeframeMinutes > 0)
-					AddDataSeries(BarsPeriodType.Minute, HigherTimeframeMinutes);
+					// Volumetric series so the higher-timeframe bias filter runs on order flow, not the
+					// degraded price-only fallback. If the data feed cannot supply volumetric data the
+					// engine transparently falls back to the price-only path (same as before).
+					AddVolumetric(Instrument.FullName, BarsPeriodType.Minute, HigherTimeframeMinutes, VolumetricDeltaType.BidAsk, 1);
 				LogDiagnostic("Configure higherTimeframeFilter=" + UseHigherTimeframeFilter.ToString() + " minutes=" + HigherTimeframeMinutes.ToString(CultureInfo.InvariantCulture));
 				WriteStartupDiagnostics("configure");
 			}
@@ -287,9 +307,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (!UseHigherTimeframeFilter)
 				UpdatePrimaryRegime(bar, analysis);
 			currentLockReason = DetermineLockReason(bar, analysis);
-
-			if (string.Equals(currentLockReason, "PAST_FLAT_TIME", StringComparison.Ordinal) && Position.MarketPosition != MarketPosition.Flat)
-				ExitForSessionClose();
+			EnforceRiskHalts();
 
 			WriteHeartbeat(bar, analysis);
 			RenderVisuals(bar, analysis);
@@ -321,26 +339,50 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		private void StartDashboardCommandTimer()
 		{
-			if (!EnableDashboardControl || dashboardCommandTimer != null)
+			if (!EnableDashboardControl)
+				return;
+
+			if (dashboardBridge == null && DashboardBridgePort > 0)
+			{
+				dashboardBridge = new DashboardBridge(
+					DashboardBridgePort,
+					GetDashboardStatusPath(),
+					Path.Combine(Path.GetTempPath(), DashboardTokenFileName));
+				dashboardBridge.Start();
+			}
+
+			if (dashboardCommandTimer != null)
 				return;
 
 			dashboardCommandTimer = new Timer(
 				state =>
 				{
+					// In-flight guard: never queue a second control cycle while one is pending on the
+					// instrument thread, so callbacks cannot pile up behind a busy/slow tick.
+					if (Interlocked.Exchange(ref dashboardTimerInFlight, 1) == 1)
+						return;
 					try
 					{
 						TriggerCustomEvent(
 							ignored =>
 							{
-								bool commandChanged = ProcessDashboardControl();
-								bool commandExecuted = TryExecutePendingDashboardCommand();
-								if (commandChanged || commandExecuted)
-									WriteStartupDiagnostics(commandExecuted ? "timer_command_executed" : "timer_command_processed");
+								try
+								{
+									bool commandChanged = ProcessDashboardControl();
+									bool commandExecuted = TryExecutePendingDashboardCommand();
+									if (commandChanged || commandExecuted)
+										WriteStartupDiagnostics(commandExecuted ? "timer_command_executed" : "timer_command_processed");
+								}
+								finally
+								{
+									Interlocked.Exchange(ref dashboardTimerInFlight, 0);
+								}
 							},
 							null);
 					}
 					catch
 					{
+						Interlocked.Exchange(ref dashboardTimerInFlight, 0);
 					}
 				},
 				null,
@@ -350,19 +392,34 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		private void StopDashboardCommandTimer()
 		{
-			if (dashboardCommandTimer == null)
-				return;
+			if (dashboardCommandTimer != null)
+			{
+				try
+				{
+					dashboardCommandTimer.Dispose();
+				}
+				catch
+				{
+				}
+				finally
+				{
+					dashboardCommandTimer = null;
+				}
+			}
 
-			try
+			if (dashboardBridge != null)
 			{
-				dashboardCommandTimer.Dispose();
-			}
-			catch
-			{
-			}
-			finally
-			{
-				dashboardCommandTimer = null;
+				try
+				{
+					dashboardBridge.Dispose();
+				}
+				catch
+				{
+				}
+				finally
+				{
+					dashboardBridge = null;
+				}
 			}
 		}
 
@@ -778,27 +835,38 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		private void SubmitEntry(bool isLongSignal, double stopPrice, double targetPrice)
 		{
-			lastEntryBar = CurrentBar;
-			sessionTradeCount++;
 			activeStopPrice = stopPrice;
 			activeTargetPrice = targetPrice;
-			if (isLongSignal)
-				EnterLong(Quantity, LongSignalName);
-			else
-				EnterShort(Quantity, ShortSignalName);
+			int quantity = ClampContracts(Quantity);
+			// Session-trade count and cooldown are armed on FILL (OnOrderUpdate), not on submit.
+			pendingEntryOrder = isLongSignal
+				? EnterLong(quantity, LongSignalName)
+				: EnterShort(quantity, ShortSignalName);
 		}
 
 		private void SubmitDashboardEntry(bool isLongSignal, int quantity)
 		{
-			int finalQuantity = Math.Max(1, quantity);
-			lastEntryBar = CurrentBar;
-			sessionTradeCount++;
-			activeStopPrice = 0;
-			activeTargetPrice = 0;
-			if (isLongSignal)
-				EnterLong(finalQuantity, "DashboardLong");
-			else
-				EnterShort(finalQuantity, "DashboardShort");
+			int finalQuantity = ClampContracts(Math.Max(1, quantity));
+			string signalName = isLongSignal ? "DashboardLong" : "DashboardShort";
+			double refPrice = Close != null && Close.Count > 0 && CurrentBar >= 0 ? Close[0] : 0;
+			double minimumDistance = Math.Max(1, MinimumStopDistanceTicks) * TickSize;
+			double stopPrice = isLongSignal ? refPrice - minimumDistance : refPrice + minimumDistance;
+			if (refPrice > 0 && Instrument != null && Instrument.MasterInstrument != null)
+				stopPrice = Instrument.MasterInstrument.RoundToTickSize(stopPrice);
+			double targetPrice = BuildTargetPrice(isLongSignal, refPrice, stopPrice);
+
+			// A manual market entry is NEVER naked: always attach a protective stop (target if enabled),
+			// bound to the dashboard signal name so the bracket actually attaches to this entry.
+			if (refPrice > 0 && stopPrice > 0)
+				SetStopLoss(signalName, CalculationMode.Price, stopPrice, false);
+			if (UseProfitTarget && targetPrice > 0)
+				SetProfitTarget(signalName, CalculationMode.Price, targetPrice);
+
+			activeStopPrice = refPrice > 0 ? stopPrice : 0;
+			activeTargetPrice = targetPrice;
+			pendingEntryOrder = isLongSignal
+				? EnterLong(finalQuantity, signalName)
+				: EnterShort(finalQuantity, signalName);
 		}
 
 		protected override void OnOrderUpdate(Order order, double limitPrice, double stopPrice, int quantity, int filled, double averageFillPrice, OrderState orderState, DateTime time, ErrorCode error, string comment)
@@ -813,6 +881,25 @@ namespace NinjaTrader.NinjaScript.Strategies
 				averageFillPrice,
 				error,
 				string.IsNullOrWhiteSpace(comment) ? string.Empty : comment);
+
+			// Count a trade and arm cooldown only when an ENTRY actually fills (not on submit), so a
+			// rejected/never-filled entry cannot consume a session slot or block a later valid signal.
+			if (order != null && pendingEntryOrder != null && object.ReferenceEquals(order, pendingEntryOrder) && orderState == OrderState.Filled)
+			{
+				lastEntryBar = CurrentBar;
+				sessionTradeCount++;
+				pendingEntryOrder = null;
+				PersistDayState();
+			}
+
+			// Fail safe: if a protective stop/target is rejected while in a position, flatten and halt
+			// rather than leave a live position the operator believes is protected.
+			bool isProtectiveOrder = order != null && order.Name != null &&
+				(order.Name.IndexOf("Stop", StringComparison.OrdinalIgnoreCase) >= 0
+				 || order.Name.IndexOf("Profit", StringComparison.OrdinalIgnoreCase) >= 0
+				 || order.Name.IndexOf("Target", StringComparison.OrdinalIgnoreCase) >= 0);
+			if (orderState == OrderState.Rejected && isProtectiveOrder && Position.MarketPosition != MarketPosition.Flat)
+				HaltTrading("PROTECTIVE_ORDER_REJECTED");
 
 			if (error != ErrorCode.NoError || orderState == OrderState.Rejected)
 				UpdateAttemptState(lastAttemptAction, "ORDER_REJECTED", lastOrderSummary);
@@ -839,19 +926,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		private void ExitForSessionClose()
 		{
-			if (Position.MarketPosition == MarketPosition.Long)
-			{
-				ExitLong("IntentFlatTimeAuto", LongSignalName);
-				ExitLong("IntentFlatTimeDashboard", "DashboardLong");
-			}
-			else if (Position.MarketPosition == MarketPosition.Short)
-			{
-				ExitShort("IntentFlatTimeAuto", ShortSignalName);
-				ExitShort("IntentFlatTimeDashboard", "DashboardShort");
-			}
-
-			activeStopPrice = 0;
-			activeTargetPrice = 0;
+			// Unconditional whole-position close (handles any entry name, no residue after a reversal).
+			FlattenAll();
 		}
 
 		private void UpdateSessionPnLTracking()
@@ -861,19 +937,191 @@ namespace NinjaTrader.NinjaScript.Strategies
 			{
 				sessionHigh = Math.Max(sessionHigh, High[0]);
 				sessionLow = Math.Min(sessionLow, Low[0]);
+				PersistDayState();
 				return;
 			}
 
+			LoadPersistedDayStateIfNeeded();
 			tradingDate = barDate;
-			sessionStartCumProfit = SystemPerformance.AllTrades.TradesPerformance.Currency.CumProfit;
+			double instanceCumProfit = SystemPerformance.AllTrades.TradesPerformance.Currency.CumProfit;
+			if (persistedDayDate == barDate)
+			{
+				// Resume same-day accounting across a reload/recompile: rebase so realized day P&L
+				// continues from the persisted value and restore a latched halt.
+				sessionStartCumProfit = instanceCumProfit - persistedDayPnL;
+				tradingHaltedForSession = persistedHalted;
+				haltReason = persistedHalted ? "DAILY_LOSS_LIMIT" : string.Empty;
+			}
+			else
+			{
+				sessionStartCumProfit = instanceCumProfit;
+				tradingHaltedForSession = false;
+				haltReason = string.Empty;
+			}
+
 			sessionHigh = High[0];
 			sessionLow = Low[0];
 			sessionTradeCount = 0;
+			PersistDayState();
 		}
 
 		private double GetCurrentSessionPnL()
 		{
 			return SystemPerformance.AllTrades.TradesPerformance.Currency.CumProfit - sessionStartCumProfit;
+		}
+
+		// Day P&L INCLUDING the open position's mark-to-market, so the daily loss limit engages on a
+		// fast adverse move instead of only after the trade is realized.
+		private double GetTotalSessionPnL()
+		{
+			double price = Close != null && Close.Count > 0 && CurrentBar >= 0 ? Close[0] : 0;
+			double openPnL = Position.MarketPosition == MarketPosition.Flat ? 0 : GetUnrealizedPnL(price);
+			return GetCurrentSessionPnL() + openPnL;
+		}
+
+		private int ClampContracts(int requested)
+		{
+			int cap = Math.Max(1, MaxContracts);
+			return Math.Max(1, Math.Min(requested, cap));
+		}
+
+		// Unconditional flatten of the entire position regardless of which entry name opened it.
+		// Name-scoped exits could leave residue after a reversal or a dashboard entry.
+		private void FlattenAll()
+		{
+			if (Position.MarketPosition == MarketPosition.Long)
+				ExitLong();
+			else if (Position.MarketPosition == MarketPosition.Short)
+				ExitShort();
+
+			activeStopPrice = 0;
+			activeTargetPrice = 0;
+		}
+
+		// Latched, session-wide kill: flattens and refuses all new entries (auto AND dashboard) until
+		// a new session or manual re-arm. Survives reload via the persisted day state.
+		private void HaltTrading(string reason)
+		{
+			bool firstHalt = !tradingHaltedForSession;
+			tradingHaltedForSession = true;
+			haltReason = string.IsNullOrEmpty(reason) ? "HALTED" : reason;
+			dashboardExecutionEnabled = false;
+			if (Position.MarketPosition != MarketPosition.Flat)
+				FlattenAll();
+			if (firstHalt)
+			{
+				UpdateAttemptState(lastAttemptAction, "HALTED", haltReason);
+				lastCommandAcknowledgement = "Trading halted: " + haltReason;
+			}
+			PersistDayState();
+		}
+
+		private bool IsManualTradingBlocked(out string reason)
+		{
+			if (tradingHaltedForSession)
+			{
+				reason = "HALTED:" + haltReason;
+				return true;
+			}
+
+			if (UseDailyLossLimit && GetTotalSessionPnL() <= -Math.Abs(MaxDailyLossCurrency))
+			{
+				reason = "DAILY_LOSS_LIMIT";
+				return true;
+			}
+
+			if (UseFlatBeforeClose && State == State.Realtime && CurrentBar >= 0 && ToTime(Time[0]) >= FlatTime)
+			{
+				reason = "PAST_FLAT_TIME";
+				return true;
+			}
+
+			reason = string.Empty;
+			return false;
+		}
+
+		// Applies the hard safety lock reasons by actually flattening/latching, not just gating entries.
+		private void EnforceRiskHalts()
+		{
+			if (string.Equals(currentLockReason, "DAILY_LOSS_LIMIT", StringComparison.Ordinal))
+			{
+				HaltTrading("DAILY_LOSS_LIMIT");
+				return;
+			}
+
+			if (string.Equals(currentLockReason, "HALTED", StringComparison.Ordinal))
+			{
+				if (Position.MarketPosition != MarketPosition.Flat)
+					FlattenAll();
+				return;
+			}
+
+			if (string.Equals(currentLockReason, "PAST_FLAT_TIME", StringComparison.Ordinal) && Position.MarketPosition != MarketPosition.Flat)
+				ExitForSessionClose();
+		}
+
+		private string GetRiskStatePath()
+		{
+			string instrument = Instrument == null || string.IsNullOrEmpty(Instrument.FullName) ? "default" : Instrument.FullName;
+			foreach (char invalid in Path.GetInvalidFileNameChars())
+				instrument = instrument.Replace(invalid, '_');
+			return Path.Combine(Path.GetTempPath(), "intent-riskstate-" + instrument + ".txt");
+		}
+
+		// Persist the day's realized P&L + halt latch so a mid-session reload/recompile does not forget
+		// prior losses and re-arm a halted account.
+		private void PersistDayState()
+		{
+			if (!UseDailyLossLimit)
+				return;
+
+			try
+			{
+				string line = string.Format(
+					CultureInfo.InvariantCulture,
+					"{0:yyyy-MM-dd}|{1:0.########}|{2}",
+					tradingDate,
+					GetCurrentSessionPnL(),
+					tradingHaltedForSession ? "1" : "0");
+				File.WriteAllText(GetRiskStatePath(), line, Encoding.UTF8);
+			}
+			catch
+			{
+			}
+		}
+
+		private void LoadPersistedDayStateIfNeeded()
+		{
+			if (persistenceLoaded)
+				return;
+
+			persistenceLoaded = true;
+			if (!UseDailyLossLimit)
+				return;
+
+			try
+			{
+				string path = GetRiskStatePath();
+				if (!File.Exists(path))
+					return;
+
+				string[] parts = File.ReadAllText(path, Encoding.UTF8).Split('|');
+				if (parts.Length < 3)
+					return;
+
+				DateTime persistedDate;
+				if (DateTime.TryParseExact(parts[0], "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out persistedDate))
+					persistedDayDate = persistedDate.Date;
+
+				double persistedPnL;
+				if (double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out persistedPnL))
+					persistedDayPnL = persistedPnL;
+
+				persistedHalted = parts[2].Trim() == "1";
+			}
+			catch
+			{
+			}
 		}
 
 		private string DetermineLockReason(BarData bar, SignalResult analysis)
@@ -884,6 +1132,18 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			if (CurrentBar < RequiredBars || engine == null)
 				return "WARMUP";
+
+			// Hard safety halts evaluated in ALL modes (manual + auto) BEFORE any mode-specific gating,
+			// so a daily-loss breach, a latched halt, or the flat-before-close window also stops manual
+			// and dashboard-initiated trading — not just auto entries.
+			if (tradingHaltedForSession)
+				return "HALTED";
+
+			if (UseDailyLossLimit && GetTotalSessionPnL() <= -Math.Abs(MaxDailyLossCurrency))
+				return "DAILY_LOSS_LIMIT";
+
+			if (UseFlatBeforeClose && State == State.Realtime && ToTime(Time[0]) >= FlatTime)
+				return "PAST_FLAT_TIME";
 
 			if (GetEffectiveMode() == IntentExecutionMode.Manual)
 				return dashboardExecutionEnabled ? "MANUAL_MODE" : "MANUAL_LOCKED";
@@ -896,12 +1156,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			if (EnableDashboardControl && !dashboardExecutionEnabled)
 				return "EXECUTION_DISABLED";
-
-			if (UseFlatBeforeClose && ToTime(Time[0]) >= FlatTime)
-				return "PAST_FLAT_TIME";
-
-			if (UseDailyLossLimit && GetCurrentSessionPnL() <= -Math.Abs(MaxDailyLossCurrency))
-				return "DAILY_LOSS_LIMIT";
 
 			if (CooldownBars > 0 && CurrentBar <= lastEntryBar + CooldownBars)
 				return "COOLDOWN";
@@ -986,10 +1240,26 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (!EnableDashboardControl)
 				return false;
 
-			string command = ReadDashboardCommand();
-			if (string.IsNullOrWhiteSpace(command))
+			string raw = ReadDashboardCommand();
+			if (string.IsNullOrWhiteSpace(raw))
 				return false;
 
+			// The control channel may deliver more than one command at once (newline-separated). Process
+			// each one so rapidly-issued commands are not dropped; per-command id dedup prevents re-runs.
+			bool any = false;
+			string[] lines = raw.Split('\n');
+			for (int index = 0; index < lines.Length; index++)
+			{
+				string line = lines[index].Trim();
+				if (line.Length > 0 && ProcessSingleCommand(line))
+					any = true;
+			}
+
+			return any;
+		}
+
+		private bool ProcessSingleCommand(string command)
+		{
 			long commandId = ParseCommandId(command);
 			if (commandId <= 0 || commandId == lastProcessedCommandId)
 				return false;
@@ -1070,11 +1340,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		private string ReadDashboardCommand()
 		{
-			DateTime nowUtc = DateTime.UtcNow;
-			if ((nowUtc - lastBridgeCommandPollUtc).TotalMilliseconds >= 150)
+			// Non-blocking: the background DashboardBridge owns all HTTP I/O; the instrument thread only
+			// reads the last command it fetched. Falls back to the local temp-file control channel.
+			if (dashboardBridge != null)
 			{
-				lastBridgeCommandPollUtc = nowUtc;
-				string bridgeCommand = TryReadDashboardCommandFromBridge();
+				string bridgeCommand = dashboardBridge.LatestCommand;
 				if (!string.IsNullOrWhiteSpace(bridgeCommand))
 					return bridgeCommand;
 			}
@@ -1093,28 +1363,172 @@ namespace NinjaTrader.NinjaScript.Strategies
 			}
 		}
 
-		private string TryReadDashboardCommandFromBridge()
+		// Owns ALL dashboard HTTP I/O on a dedicated background thread so the NinjaTrader instrument
+		// thread never blocks on a slow/dead bridge (previously a synchronous GET/POST per tick).
+		// Sends a per-session token header (read from a user-temp file the local console writes) so the
+		// command/status endpoints can reject unauthenticated callers.
+		private sealed class DashboardBridge : IDisposable
 		{
-			if (DashboardBridgePort <= 0)
-				return string.Empty;
+			private readonly int port;
+			private readonly string statusFilePath;
+			private readonly string tokenFilePath;
+			private readonly Thread worker;
+			private readonly object gate = new object();
+			private volatile bool stop;
+			private volatile string latestCommand = string.Empty;
+			private string pendingStatus;
 
-			try
+			public DashboardBridge(int port, string statusFilePath, string tokenFilePath)
 			{
-				HttpWebRequest request = (HttpWebRequest)WebRequest.Create(
-					"http://127.0.0.1:" + DashboardBridgePort.ToString(CultureInfo.InvariantCulture) + "/api/command");
-				request.Method = "GET";
-				request.Timeout = 150;
-				request.ReadWriteTimeout = 150;
-				request.Proxy = null;
-				using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
-				using (StreamReader reader = new StreamReader(response.GetResponseStream(), Encoding.UTF8))
+				this.port = port;
+				this.statusFilePath = statusFilePath;
+				this.tokenFilePath = tokenFilePath;
+				worker = new Thread(Loop);
+				worker.IsBackground = true;
+				worker.Name = "IntentDashboardBridge";
+			}
+
+			public string LatestCommand
+			{
+				get { return latestCommand; }
+			}
+
+			public void Start()
+			{
+				if (port > 0)
+					worker.Start();
+			}
+
+			public void EnqueueStatus(string json)
+			{
+				if (string.IsNullOrWhiteSpace(json))
+					return;
+				lock (gate)
+					pendingStatus = json;
+			}
+
+			public void Dispose()
+			{
+				stop = true;
+				try
 				{
-					return reader.ReadToEnd();
+					if (worker != null && worker.IsAlive)
+						worker.Join(500);
+				}
+				catch
+				{
 				}
 			}
-			catch
+
+			private void Loop()
 			{
-				return string.Empty;
+				while (!stop)
+				{
+					try
+					{
+						string status;
+						lock (gate)
+						{
+							status = pendingStatus;
+							pendingStatus = null;
+						}
+
+						if (status != null && !Post("/api/strategy-status", status))
+							WriteStatusFile(status);
+
+						string command = Get("/api/command");
+						if (command != null)
+							latestCommand = command;
+					}
+					catch
+					{
+					}
+
+					for (int i = 0; i < 12 && !stop; i++)
+						Thread.Sleep(10);
+				}
+			}
+
+			private string Url(string path)
+			{
+				return "http://127.0.0.1:" + port.ToString(CultureInfo.InvariantCulture) + path;
+			}
+
+			private void ApplyToken(HttpWebRequest request)
+			{
+				try
+				{
+					if (string.IsNullOrEmpty(tokenFilePath) || !File.Exists(tokenFilePath))
+						return;
+					string token = File.ReadAllText(tokenFilePath, Encoding.UTF8).Trim();
+					if (token.Length > 0)
+						request.Headers["X-Intent-Token"] = token;
+				}
+				catch
+				{
+				}
+			}
+
+			private string Get(string path)
+			{
+				try
+				{
+					HttpWebRequest request = (HttpWebRequest)WebRequest.Create(Url(path));
+					request.Method = "GET";
+					request.Timeout = 250;
+					request.ReadWriteTimeout = 250;
+					request.Proxy = null;
+					ApplyToken(request);
+					using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+					using (StreamReader reader = new StreamReader(response.GetResponseStream(), Encoding.UTF8))
+						return reader.ReadToEnd();
+				}
+				catch
+				{
+					return null;
+				}
+			}
+
+			private bool Post(string path, string payload)
+			{
+				try
+				{
+					byte[] bytes = Encoding.UTF8.GetBytes(payload);
+					HttpWebRequest request = (HttpWebRequest)WebRequest.Create(Url(path));
+					request.Method = "POST";
+					request.ContentType = "application/json; charset=utf-8";
+					request.ContentLength = bytes.Length;
+					request.Timeout = 250;
+					request.ReadWriteTimeout = 250;
+					request.Proxy = null;
+					ApplyToken(request);
+					using (Stream requestStream = request.GetRequestStream())
+						requestStream.Write(bytes, 0, bytes.Length);
+					using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+					{
+					}
+					return true;
+				}
+				catch
+				{
+					return false;
+				}
+			}
+
+			private void WriteStatusFile(string payload)
+			{
+				if (string.IsNullOrEmpty(statusFilePath))
+					return;
+				try
+				{
+					string tempPath = statusFilePath + ".tmp";
+					File.WriteAllText(tempPath, payload, Encoding.UTF8);
+					try { File.Delete(statusFilePath); } catch { }
+					File.Move(tempPath, statusFilePath);
+				}
+				catch
+				{
+				}
 			}
 		}
 
@@ -1138,6 +1552,16 @@ namespace NinjaTrader.NinjaScript.Strategies
 			string command = pendingDashboardCommand;
 			int quantity = Math.Max(1, pendingDashboardQuantity);
 			pendingDashboardCommand = string.Empty;
+
+			// Flatten is always allowed (it reduces risk). New manual entries (buy/sell/reverse) obey the
+			// same hard safety halts as auto: a latched halt, a daily-loss breach, or past flat time.
+			string manualBlockReason;
+			if (!string.Equals(command, "flatten", StringComparison.OrdinalIgnoreCase) && IsManualTradingBlocked(out manualBlockReason))
+			{
+				lastCommandAcknowledgement = "Command blocked: " + manualBlockReason;
+				UpdateAttemptState("Dashboard", "BLOCKED", manualBlockReason);
+				return true;
+			}
 
 			if (string.Equals(command, "flatten", StringComparison.OrdinalIgnoreCase))
 			{
@@ -1477,35 +1901,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		private bool TryPublishDashboardStatus(string payload)
 		{
-			if (DashboardBridgePort <= 0 || string.IsNullOrWhiteSpace(payload))
+			// Non-blocking hand-off to the background bridge; the instrument thread never does HTTP.
+			if (dashboardBridge == null || string.IsNullOrWhiteSpace(payload))
 				return false;
 
-			try
-			{
-				byte[] bytes = Encoding.UTF8.GetBytes(payload);
-				HttpWebRequest request = (HttpWebRequest)WebRequest.Create(
-					"http://127.0.0.1:" + DashboardBridgePort.ToString(CultureInfo.InvariantCulture) + "/api/strategy-status");
-				request.Method = "POST";
-				request.ContentType = "application/json; charset=utf-8";
-				request.ContentLength = bytes.Length;
-				request.Timeout = 150;
-				request.ReadWriteTimeout = 150;
-				request.Proxy = null;
-				using (Stream requestStream = request.GetRequestStream())
-				{
-					requestStream.Write(bytes, 0, bytes.Length);
-				}
-
-				using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
-				{
-				}
-
-				return true;
-			}
-			catch
-			{
-				return false;
-			}
+			dashboardBridge.EnqueueStatus(payload);
+			return true;
 		}
 
 		private void UpdateAttemptState(string action, string outcome, string reason)
@@ -1899,6 +2300,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 		[NinjaScriptProperty]
 		[Display(Name = "Quantity", GroupName = "Trade Controls", Order = 5)]
 		public int Quantity { get; set; }
+
+		[Range(1, int.MaxValue)]
+		[NinjaScriptProperty]
+		[Display(Name = "MaxContracts", GroupName = "Risk", Order = 12)]
+		public int MaxContracts { get; set; }
 
 		[Range(1, int.MaxValue)]
 		[NinjaScriptProperty]

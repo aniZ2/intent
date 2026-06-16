@@ -49,8 +49,15 @@ namespace Intent.StreamRunner
 				}
 
 				double price = payload.Price.Value;
-				double bid = payload.Bid != null && IsFinite(payload.Bid.Value) ? payload.Bid.Value : price;
-				double ask = payload.Ask != null && IsFinite(payload.Ask.Value) ? payload.Ask.Value : price;
+				bool hasBid = payload.Bid != null && IsFinite(payload.Bid.Value);
+				bool hasAsk = payload.Ask != null && IsFinite(payload.Ask.Value);
+				double bid = hasBid ? payload.Bid.Value : price;
+				double ask = hasAsk ? payload.Ask.Value : price;
+
+				bool? explicitAggressor = payload.IsBuyerInitiated ?? payload.BuyerInitiated;
+				bool isBuyerInitiated = explicitAggressor.HasValue
+					? explicitAggressor.Value
+					: InferBuyerInitiated(price, bid, ask, hasBid && hasAsk);
 
 				tick = new TickData
 				{
@@ -60,7 +67,7 @@ namespace Intent.StreamRunner
 					Volume = payload.Volume.Value,
 					Bid = bid,
 					Ask = ask,
-					IsBuyerInitiated = payload.IsBuyerInitiated ?? payload.BuyerInitiated ?? false
+					IsBuyerInitiated = isBuyerInitiated
 				};
 				return true;
 			}
@@ -89,6 +96,25 @@ namespace Intent.StreamRunner
 		private static bool IsFinite(double value)
 		{
 			return !double.IsNaN(value) && !double.IsInfinity(value);
+		}
+
+		private static bool InferBuyerInitiated(double price, double bid, double ask, bool hasQuote)
+		{
+			// When the feed omits an explicit aggressor flag, infer it from the quote instead of
+			// defaulting every trade to the sell side (which routes all volume to BidVolume and biases
+			// delta/imbalance permanently bearish). Trade at/above the ask is buyer-initiated, at/below
+			// the bid is seller-initiated, in-between resolves on the mid. Without a usable quote the
+			// aggressor is genuinely unknown, so fall back to seller-initiated (documented default).
+			if (hasQuote && ask > bid)
+			{
+				if (price >= ask)
+					return true;
+				if (price <= bid)
+					return false;
+				return price >= (bid + ask) / 2.0;
+			}
+
+			return false;
 		}
 
 		[DataContract]

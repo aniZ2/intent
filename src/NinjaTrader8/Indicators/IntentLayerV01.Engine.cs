@@ -172,10 +172,12 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 		private double AverageVolume(int lookback)
 		{
+			// Average of PRIOR bars (exclude the current bar), matching the strategy's baseline so the
+			// charted indicator and the trading strategy compute the same VolumeSpike for a bar.
 			double sum = 0;
-			int bars = Math.Min(owner.CurrentBar + 1, Math.Max(1, lookback));
+			int bars = Math.Min(owner.CurrentBar, Math.Max(1, lookback));
 
-			for (int barsAgo = 0; barsAgo < bars; barsAgo++)
+			for (int barsAgo = 1; barsAgo <= bars; barsAgo++)
 				sum += owner.Volume[barsAgo];
 
 			return sum / Math.Max(1, bars);
@@ -183,10 +185,11 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 		private double AverageRange(int lookback)
 		{
+			// Average of PRIOR bars (exclude the current bar), matching the strategy's RangeExpansion.
 			double sum = 0;
-			int bars = Math.Min(owner.CurrentBar + 1, Math.Max(1, lookback));
+			int bars = Math.Min(owner.CurrentBar, Math.Max(1, lookback));
 
-			for (int barsAgo = 0; barsAgo < bars; barsAgo++)
+			for (int barsAgo = 1; barsAgo <= bars; barsAgo++)
 				sum += Math.Max(owner.High[barsAgo] - owner.Low[barsAgo], owner.TickSize);
 
 			return sum / Math.Max(1, bars);

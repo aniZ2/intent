@@ -62,6 +62,14 @@ namespace Intent.Sweep
 		public double StabilityPenalty { get; set; }
 		public double FinalScore { get; set; }
 		public int FoldCount { get; set; }
+		public int BacktestTrades { get; set; }
+		public double NetPnL { get; set; }
+		public double Expectancy { get; set; }
+		public double WinRate { get; set; }
+		public double ProfitFactor { get; set; }
+		public double MaxDrawdown { get; set; }
+		public double SharpePerTrade { get; set; }
+		public double ExpectancyStability { get; set; }
 		public List<double> FoldF1Scores { get; private set; }
 		public QualityBreakdown FullOrderFlow { get; private set; }
 		public QualityBreakdown PriceOnly { get; private set; }
@@ -116,6 +124,14 @@ namespace Intent.Sweep
 			AppendNumber(builder, "stabilityPenalty", StabilityPenalty, true);
 			AppendNumber(builder, "finalScore", FinalScore, true);
 			AppendNumber(builder, "foldCount", FoldCount, true);
+			AppendNumber(builder, "backtestTrades", BacktestTrades, true);
+			AppendNumber(builder, "netPnL", NetPnL, true);
+			AppendNumber(builder, "expectancyPerTrade", Expectancy, true);
+			AppendNumber(builder, "winRate", WinRate, true);
+			AppendNumber(builder, "profitFactor", ProfitFactor, true);
+			AppendNumber(builder, "maxDrawdown", MaxDrawdown, true);
+			AppendNumber(builder, "sharpePerTrade", SharpePerTrade, true);
+			AppendNumber(builder, "expectancyStability", ExpectancyStability, true);
 			AppendNumber(builder, "fullOrderFlowPackets", FullOrderFlowPackets, true);
 			AppendNumber(builder, "priceOnlyPackets", PriceOnlyPackets, true);
 			AppendNumberArray(builder, "foldF1Scores", FoldF1Scores, true);

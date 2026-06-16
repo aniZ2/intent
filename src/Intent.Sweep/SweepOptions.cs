@@ -24,6 +24,10 @@ namespace Intent.Sweep
 			LookaheadBars = 8;
 			TopCount = 3;
 			TrainWindowSessions = 4;
+			CommissionPerSide = 2.0;
+			SlippageTicks = 1.0;
+			TickValue = 12.5;
+			MinTradesForRanking = 10;
 			SignalThresholds = new[] { 60 };
 			ImbalanceWeights = new[] { 0.35 };
 			AbsorptionWeights = new[] { 0.20 };
@@ -53,6 +57,10 @@ namespace Intent.Sweep
 		public int LookaheadBars { get; set; }
 		public int TopCount { get; set; }
 		public int TrainWindowSessions { get; set; }
+		public double CommissionPerSide { get; set; }
+		public double SlippageTicks { get; set; }
+		public double TickValue { get; set; }
+		public int MinTradesForRanking { get; set; }
 		public int[] SignalThresholds { get; set; }
 		public double[] ImbalanceWeights { get; set; }
 		public double[] AbsorptionWeights { get; set; }
@@ -97,6 +105,14 @@ namespace Intent.Sweep
 					options.TopCount = ParseInt(args[++index], 1, 100, "top-count");
 				else if (string.Equals(argument, "--train-window-sessions", StringComparison.OrdinalIgnoreCase) && index + 1 < args.Length)
 					options.TrainWindowSessions = ParseInt(args[++index], 1, 1000, "train-window-sessions");
+				else if (string.Equals(argument, "--commission-per-side", StringComparison.OrdinalIgnoreCase) && index + 1 < args.Length)
+					options.CommissionPerSide = ParseDouble(args[++index], 0, "commission-per-side");
+				else if (string.Equals(argument, "--slippage-ticks", StringComparison.OrdinalIgnoreCase) && index + 1 < args.Length)
+					options.SlippageTicks = ParseDouble(args[++index], 0, "slippage-ticks");
+				else if (string.Equals(argument, "--tick-value", StringComparison.OrdinalIgnoreCase) && index + 1 < args.Length)
+					options.TickValue = ParseDouble(args[++index], 0, "tick-value");
+				else if (string.Equals(argument, "--min-trades-for-ranking", StringComparison.OrdinalIgnoreCase) && index + 1 < args.Length)
+					options.MinTradesForRanking = ParseInt(args[++index], 0, 100000, "min-trades-for-ranking");
 				else if (string.Equals(argument, "--signal-thresholds", StringComparison.OrdinalIgnoreCase) && index + 1 < args.Length)
 					options.SignalThresholds = ParseIntList(args[++index], 1, 100, "signal-thresholds");
 				else if (string.Equals(argument, "--imbalance-weights", StringComparison.OrdinalIgnoreCase) && index + 1 < args.Length)

@@ -3,6 +3,10 @@ logs/
 data/sessions/
 bin/
 obj/
+build-out/
+artifacts/
+tmp/
+-RepoRoot/
 *.dll
 *.exe
 *.zip

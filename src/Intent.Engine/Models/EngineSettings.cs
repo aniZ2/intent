@@ -55,6 +55,7 @@ namespace Intent.Engine.Models
 			ContinuationTradeThreshold = 60.0;
 			ReversalTradeThreshold = 65.0;
 			PullbackTradeThreshold = 70.0;
+			SessionRolloverHourUtc = 0;
 		}
 
 		public int SignalThreshold { get; set; }
@@ -108,5 +109,10 @@ namespace Intent.Engine.Models
 		public double ContinuationTradeThreshold { get; set; }
 		public double ReversalTradeThreshold { get; set; }
 		public double PullbackTradeThreshold { get; set; }
+
+		// UTC hour (0-23) at which a new trading session begins; 0 = UTC-midnight rollover.
+		// Set to the exchange session-open hour in UTC for futures so session state resets on the
+		// real session boundary instead of splitting the overnight session at 00:00 UTC.
+		public int SessionRolloverHourUtc { get; set; }
 	}
 }

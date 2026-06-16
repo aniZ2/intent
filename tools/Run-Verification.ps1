@@ -253,26 +253,44 @@ Remove-Item -Recurse -Force $smokeDir
 Write-Output "Running behavior validation..."
 Invoke-ScriptChecked -Path (Join-Path $PSScriptRoot "Validate-Behavior.ps1")
 
-Write-Output "Compiling NinjaTrader adapter..."
-Invoke-External -FilePath "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe" -Arguments @(
-    "/define:STANDALONE_VERIFY",
-    "/target:library",
-    "/nologo",
-    "/out:$ninjaDll",
-    "/r:$engineDll",
-    "/r:C:\Program Files\NinjaTrader 8\bin\NinjaTrader.Core.dll",
-    "/r:C:\Program Files\NinjaTrader 8\bin\NinjaTrader.Gui.dll",
-    "/r:$HOME\Documents\NinjaTrader 8\bin\Custom\NinjaTrader.Vendor.dll",
-    "/r:C:\Windows\Microsoft.NET\Framework\v4.0.30319\WPF\WindowsBase.dll",
-    "/r:C:\Windows\Microsoft.NET\Framework\v4.0.30319\WPF\PresentationCore.dll",
-    "/r:C:\Windows\Microsoft.NET\Framework\v4.0.30319\WPF\PresentationFramework.dll",
-    "/r:System.ComponentModel.DataAnnotations.dll",
-    (Join-Path $repoRoot "src\NinjaTrader8\Indicators\IntentLayerV01.Adapter.cs"),
-    (Join-Path $repoRoot "src\NinjaTrader8\Indicators\IntentLayerV01.Models.cs"),
-    (Join-Path $repoRoot "src\NinjaTrader8\Indicators\IntentLayerV01.Engine.cs"),
-    (Join-Path $repoRoot "src\NinjaTrader8\Indicators\IntentLayerV01.Rendering.cs"),
-    (Join-Path $repoRoot "src\NinjaTrader8\Indicators\IntentLayerV01.Streaming.cs"),
-    (Join-Path $repoRoot "src\NinjaTrader8\Indicators\IntentLayerV01.cs")
-)
+Write-Output "Compiling NinjaTrader indicator + strategy..."
+$ntBin = "C:\Program Files\NinjaTrader 8\bin"
+$vendorDll = @(
+    (Join-Path $env:USERPROFILE "Documents\NinjaTrader 8\bin\Custom\NinjaTrader.Vendor.dll"),
+    (Join-Path $env:USERPROFILE "OneDrive\Documents\NinjaTrader 8\bin\Custom\NinjaTrader.Vendor.dll"),
+    (Join-Path $ntBin "Custom\Backup\NinjaTrader.Vendor.dll")
+) | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+if (-not (Test-Path (Join-Path $ntBin "NinjaTrader.Core.dll")) -or -not $vendorDll) {
+    Write-Warning "NinjaTrader assemblies not found; skipping NinjaTrader compile (indicator + strategy NOT verified here)."
+} else {
+    $wpf = "C:\Windows\Microsoft.NET\Framework\v4.0.30319\WPF"
+    # NOTE: the live order-placing strategy (IntentAutoTraderV01.cs) is now compiled here. Previously it
+    # was omitted, so a breaking change to the only money-losing component passed "verification" untouched.
+    Invoke-External -FilePath "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe" -Arguments @(
+        "/define:STANDALONE_VERIFY",
+        "/target:library",
+        "/nologo",
+        "/out:$ninjaDll",
+        "/r:$engineDll",
+        "/r:$(Join-Path $ntBin 'NinjaTrader.Core.dll')",
+        "/r:$(Join-Path $ntBin 'NinjaTrader.Gui.dll')",
+        "/r:$vendorDll",
+        "/r:$(Join-Path $wpf 'WindowsBase.dll')",
+        "/r:$(Join-Path $wpf 'PresentationCore.dll')",
+        "/r:$(Join-Path $wpf 'PresentationFramework.dll')",
+        "/r:System.ComponentModel.DataAnnotations.dll",
+        (Join-Path $repoRoot "src\NinjaTrader8\Indicators\IntentLayerV01.Adapter.cs"),
+        (Join-Path $repoRoot "src\NinjaTrader8\Indicators\IntentLayerV01.Models.cs"),
+        (Join-Path $repoRoot "src\NinjaTrader8\Indicators\IntentLayerV01.Engine.cs"),
+        (Join-Path $repoRoot "src\NinjaTrader8\Indicators\IntentLayerV01.Rendering.cs"),
+        (Join-Path $repoRoot "src\NinjaTrader8\Indicators\IntentLayerV01.Streaming.cs"),
+        (Join-Path $repoRoot "src\NinjaTrader8\Indicators\IntentLayerV01.cs"),
+        (Join-Path $repoRoot "src\NinjaTrader8\Strategies\IntentAutoTraderV01.cs")
+    )
+}
+
+Write-Output "Running backtester self-test..."
+Invoke-External -FilePath $sweepExe -Arguments @("--selftest")
 
 Write-Output "Verification complete."

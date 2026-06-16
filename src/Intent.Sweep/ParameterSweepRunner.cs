@@ -46,7 +46,7 @@ namespace Intent.Sweep
 				for (int index = 0; index < summaries.Count; index++)
 					WriteRecord(summaries[index].ToJson(), writer);
 
-				WriteRecord(BuildRankingJson(summaries, "accuracy"), writer);
+				WriteRecord(BuildRankingJson(summaries, "netExpectancy"), writer);
 			}
 			finally
 			{
@@ -90,7 +90,57 @@ namespace Intent.Sweep
 
 			SweepSummary defaultSummary = EvaluateConfig(sessions, BuildDefaultConfig(), "defaultComparison");
 			summaries.Add(defaultSummary);
+
+			// Pool every out-of-sample test fold into ONE headline number: the post-cost expectancy of
+			// the walk-forward-selected config on data it never trained on. This is the go/no-go metric.
+			SweepSummary outOfSample = BuildOutOfSampleAggregate(bestTestSummaries);
+			if (outOfSample != null)
+				summaries.Add(outOfSample);
+
 			return summaries;
+		}
+
+		private BacktestConfig BuildBacktestConfig()
+		{
+			return new BacktestConfig
+			{
+				TickSize = options.TickSize,
+				TargetTicks = options.TargetTicks,
+				StopTicks = options.InvalidationTicks,
+				MaxHoldBars = options.LookaheadBars,
+				CommissionPerSide = options.CommissionPerSide,
+				SlippageTicks = options.SlippageTicks,
+				TickValue = options.TickValue
+			};
+		}
+
+		private SweepSummary BuildOutOfSampleAggregate(List<SweepSummary> testSummaries)
+		{
+			if (testSummaries == null || testSummaries.Count == 0)
+				return null;
+
+			int trades = 0;
+			double netPnl = 0;
+			List<double> foldExpectancies = new List<double>();
+			for (int index = 0; index < testSummaries.Count; index++)
+			{
+				trades += testSummaries[index].BacktestTrades;
+				netPnl += testSummaries[index].NetPnL;
+				if (testSummaries[index].BacktestTrades > 0)
+					foldExpectancies.Add(testSummaries[index].Expectancy);
+			}
+
+			SweepSummary aggregate = new SweepSummary
+			{
+				RecordType = "outOfSampleAggregate",
+				BacktestTrades = trades,
+				NetPnL = netPnl,
+				Expectancy = trades > 0 ? netPnl / trades : 0,
+				ExpectancyStability = ComputeStandardDeviation(foldExpectancies),
+				FoldCount = testSummaries.Count
+			};
+			aggregate.FinalScore = aggregate.Expectancy;
+			return aggregate;
 		}
 
 		private List<SweepSummary> RunDirectEvaluation(List<TickSession> sessions, List<ConfigSpec> configs)
@@ -107,6 +157,8 @@ namespace Intent.Sweep
 		{
 			SweepSummary summary = CreateSummary(config, recordType);
 			List<double> sessionF1s = new List<double>();
+			List<double> allTradePnls = new List<double>();
+			List<double> sessionExpectancies = new List<double>();
 
 			double scoreTotal = 0;
 			double latencyTotal = 0;
@@ -131,6 +183,14 @@ namespace Intent.Sweep
 				SessionMetrics metrics = EvaluateSession(sessions[sessionIndex], config);
 				Accumulate(summary, metrics, ref scoreTotal, ref latencyTotal, ref latencyBars, ref timeToMoveTotal, ref timeToMoveWins, ref adverseExcursionResolved, ref resolvedSignals, ref fullTimeToMoveTotal, ref fullTimeToMoveWins, ref fullAdverseExcursionResolved, ref fullResolvedSignals, ref priceTimeToMoveTotal, ref priceTimeToMoveWins, ref priceAdverseExcursionResolved, ref priceResolvedSignals);
 				sessionF1s.Add(metrics.F1);
+				allTradePnls.AddRange(metrics.BacktestTradePnls);
+				if (metrics.BacktestTradePnls.Count > 0)
+				{
+					double sessionSum = 0;
+					for (int tradeIndex = 0; tradeIndex < metrics.BacktestTradePnls.Count; tradeIndex++)
+						sessionSum += metrics.BacktestTradePnls[tradeIndex];
+					sessionExpectancies.Add(sessionSum / metrics.BacktestTradePnls.Count);
+				}
 			}
 
 			summary.AverageScore = summary.CompletedBars == 0 ? 0 : scoreTotal / summary.CompletedBars;
@@ -142,8 +202,21 @@ namespace Intent.Sweep
 			summary.F1 = ComputeF1(summary.Precision, summary.Recall);
 			summary.AverageTimeToMoveBars = timeToMoveWins == 0 ? 0 : timeToMoveTotal / timeToMoveWins;
 			summary.AverageAdverseExcursionTicks = resolvedSignals == 0 ? 0 : adverseExcursionResolved / resolvedSignals;
-			summary.StabilityPenalty = ComputeStandardDeviation(sessionF1s) * 2.0;
-			summary.FinalScore = summary.F1 - summary.StabilityPenalty;
+			BacktestResult aggregate = BacktestResult.FromTrades(allTradePnls);
+			summary.BacktestTrades = aggregate.Trades;
+			summary.NetPnL = aggregate.NetPnL;
+			summary.Expectancy = aggregate.Expectancy;
+			summary.WinRate = aggregate.WinRate;
+			summary.ProfitFactor = aggregate.ProfitFactor;
+			summary.MaxDrawdown = aggregate.MaxDrawdown;
+			summary.SharpePerTrade = aggregate.SharpePerTrade;
+			summary.ExpectancyStability = ComputeStandardDeviation(sessionExpectancies);
+			// Rank on POST-COST expectancy per trade, penalized for instability across sessions. Configs
+			// with too few trades to be meaningful are pushed below all adequately-sampled configs so a
+			// lucky 1-trade config cannot win. F1/precision/recall remain as diagnostics only.
+			summary.StabilityPenalty = 0.5 * summary.ExpectancyStability;
+			summary.FinalScore = aggregate.Expectancy - summary.StabilityPenalty
+				- (aggregate.Trades < options.MinTradesForRanking ? 1000000.0 : 0.0);
 			summary.FoldCount = sessionF1s.Count;
 			summary.FoldF1Scores.AddRange(sessionF1s);
 
@@ -175,6 +248,18 @@ namespace Intent.Sweep
 
 			Consume(runtime.FlushPending(), metrics, completedBars, signalCandidates);
 			EvaluateSignalsAndMisses(metrics, completedBars, signalCandidates);
+
+			List<BacktestSignal> backtestSignals = new List<BacktestSignal>();
+			for (int candidateIndex = 0; candidateIndex < signalCandidates.Count; candidateIndex++)
+			{
+				int direction = string.Equals(signalCandidates[candidateIndex].Direction, "Bullish", StringComparison.Ordinal) ? 1
+					: string.Equals(signalCandidates[candidateIndex].Direction, "Bearish", StringComparison.Ordinal) ? -1 : 0;
+				if (direction != 0)
+					backtestSignals.Add(new BacktestSignal(signalCandidates[candidateIndex].BarIndex, direction));
+			}
+
+			BacktestResult backtest = TradeBacktester.Run(completedBars, backtestSignals, BuildBacktestConfig());
+			metrics.BacktestTradePnls.AddRange(backtest.TradePnls);
 			metrics.Precision = ComputePrecision(metrics.WinningSignals, metrics.FalsePositives);
 			metrics.Recall = ComputeRecall(metrics.WinningSignals, metrics.MissedSignals);
 			metrics.F1 = ComputeF1(metrics.Precision, metrics.Recall);
@@ -817,6 +902,7 @@ namespace Intent.Sweep
 			{
 				FullOrderFlow = new QualityMetrics();
 				PriceOnly = new QualityMetrics();
+				BacktestTradePnls = new List<double>();
 			}
 
 			public int CompletedBars { get; set; }
@@ -844,6 +930,7 @@ namespace Intent.Sweep
 			public double F1 { get; set; }
 			public QualityMetrics FullOrderFlow { get; private set; }
 			public QualityMetrics PriceOnly { get; private set; }
+			public List<double> BacktestTradePnls { get; private set; }
 		}
 
 		private sealed class QualityMetrics

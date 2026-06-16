@@ -18,6 +18,7 @@ namespace Intent.StreamRunner
 			PacketOutputPath = ReadEnv("INTENT_STREAM_PACKET_FILE", string.Empty);
 			TickArchiveRootPath = ReadEnv("INTENT_STREAM_TICK_ARCHIVE_DIR", string.Empty);
 			DashboardPort = ParseEnvInt("INTENT_STREAM_DASHBOARD_PORT", 0);
+			SessionRolloverHourUtc = ParseEnvIntInRange("INTENT_STREAM_SESSION_ROLLOVER_HOUR_UTC", 0, 0, 23);
 			EmitCompletedBars = true;
 			EmitSignalEvents = true;
 		}
@@ -34,6 +35,7 @@ namespace Intent.StreamRunner
 		public string PacketOutputPath { get; set; }
 		public string TickArchiveRootPath { get; set; }
 		public int DashboardPort { get; set; }
+		public int SessionRolloverHourUtc { get; set; }
 		public bool EmitCompletedBars { get; set; }
 		public bool EmitSignalEvents { get; set; }
 
@@ -61,6 +63,8 @@ namespace Intent.StreamRunner
 					options.TickArchiveRootPath = args[++index];
 				else if (string.Equals(argument, "--dashboard-port", StringComparison.OrdinalIgnoreCase) && index + 1 < args.Length)
 					options.DashboardPort = ParseInt(args[++index], 0, 65535, "dashboard-port");
+				else if (string.Equals(argument, "--session-rollover-hour-utc", StringComparison.OrdinalIgnoreCase) && index + 1 < args.Length)
+					options.SessionRolloverHourUtc = ParseInt(args[++index], 0, 23, "session-rollover-hour-utc");
 				else if (string.Equals(argument, "--emit-signals-only", StringComparison.OrdinalIgnoreCase))
 					options.EmitCompletedBars = false;
 				else if (string.Equals(argument, "--emit-bars-only", StringComparison.OrdinalIgnoreCase))
@@ -101,6 +105,13 @@ namespace Intent.StreamRunner
 			string raw = Environment.GetEnvironmentVariable(name);
 			int value;
 			return int.TryParse(raw, out value) && value > 0 ? value : fallback;
+		}
+
+		private static int ParseEnvIntInRange(string name, int fallback, int minimum, int maximum)
+		{
+			string raw = Environment.GetEnvironmentVariable(name);
+			int value;
+			return int.TryParse(raw, out value) && value >= minimum && value <= maximum ? value : fallback;
 		}
 
 		private static double ParseEnvDouble(string name, double fallback)

@@ -12,7 +12,9 @@ namespace Intent.StreamRunner
 		public static IntentRuntime Create(RunnerOptions options)
 		{
 			EngineSettings settings = new EngineSettings();
+			settings.SessionRolloverHourUtc = options.SessionRolloverHourUtc;
 			EngineState state = new EngineState(options.VolumeLookback, options.RangeLookback, options.StructureLookback);
+			state.SessionRolloverHourUtc = options.SessionRolloverHourUtc;
 			IBarBuilder barBuilder = new BarBuilder(TimeSpan.FromSeconds(options.BarSeconds), state, options.TickSize);
 			return new IntentRuntime(
 				settings,
